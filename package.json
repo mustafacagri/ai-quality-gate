@@ -42,7 +42,6 @@
   "bugs": {
     "url": "https://github.com/mustafacagri/ai-quality-gate/issues"
   },
-  "private": true,
   "engines": {
     "node": ">=18.0.0"
   },
@@ -60,6 +59,10 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12.0.6",
+    "@semantic-release/npm": "^13.1.5",
     "@types/inquirer": "^9.0.9",
     "@types/node": "^24.10.1",
     "@typescript-eslint/eslint-plugin": "^8.48.1",
@@ -75,6 +78,7 @@
     "eslint-plugin-unused-imports": "^4.3.0",
     "prettier": "^3.7.4",
     "rimraf": "^6.0.0",
+    "semantic-release": "^25.0.3",
     "tsup": "^8.5.1",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.48.1",

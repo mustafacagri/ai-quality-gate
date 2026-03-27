@@ -1,0 +1,64 @@
+name: Modern Trusted Publish
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      packages: write
+      pull-requests: write
+
+    steps:
+      # 1️⃣ Checkout
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      # 2️⃣ Setup Node.js for npm
+      - name: Setup Node.js for npm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      # 3️⃣ Install & Build
+      - name: Install & Build
+        run: |
+          yarn install --frozen-lockfile
+          yarn build
+
+      # 4️⃣ Versioning + changelog + git tag
+      - name: Run semantic-release
+        run: npx semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 5️⃣ Sync repository state (deterministic)
+      - name: Sync repository state
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      # 6️⃣ Publish to npm via OIDC (Trusted Publishers)
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+
+      # 7️⃣ Publish to GitHub Packages
+      - name: Setup Node.js for GitHub Packages
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@mustafacagri'
+
+      - name: Publish to GitHub Packages
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

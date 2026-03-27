@@ -1,3 +1,11 @@
+# 1.0.0 (2026-03-27)
+
+
+### Bug Fixes
+
+* finalize automated OIDC release pipeline ([fc02b39](https://github.com/mustafacagri/ai-quality-gate/commit/fc02b39d1ff4772cf8989c33c1db0e673900ae56))
+* upgrade node to v24 for future-proof ci compatibility ([69b22d6](https://github.com/mustafacagri/ai-quality-gate/commit/69b22d6d19db556a305e62afeef11fdd6177bbb1))
+
 # Changelog
 
 All notable changes to this project are documented in this file.

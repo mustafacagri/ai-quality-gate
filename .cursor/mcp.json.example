@@ -1,0 +1,76 @@
+/*
+ * ai-quality-gate — Cursor MCP configuration examples.
+ *
+ * Server key vs MCP tool: the JSON key under mcpServers (e.g. "ai-quality-gate")
+ * is your label for this server in Cursor. The tool the agent invokes is always
+ * quality_fix — fixed by this package; it is not the same as the server key.
+ *
+ * ⚠️ IMPORTANT: Use ONLY ONE of these entries!
+ * Copy ONE block to your mcp.json (Settings → Tools & MCP → Edit).
+ * Remove the others - only 1 server can be active at a time.
+ *
+ * -------------------------------------------------------------
+ *
+ * OPTION 1: Basic (RECOMMENDED)
+ * - No config needed - automatically detects your project root
+ * - Perfect for Phase 1 (ESLint + TypeScript + Prettier)
+ *
+ * OPTION 2: With custom PROJECT_ROOT
+ * - Use when you need to analyze a different folder than your workspace
+ *
+ * OPTION 3: With SonarQube (Phase 2)
+ * - Requires SonarQube server setup (see README.md)
+ *
+ * OPTION 4: Global npm install
+ * - Run "npm i -g ai-quality-gate" first
+ *
+ * -------------------------------------------------------------
+ *
+ * Optional environment variables (use only if needed):
+ *
+ * QUALITY_GATE_CONFIG   Path to .quality-gate.yaml (skips auto-discovery)
+ * PROJECT_ROOT          Override project root (default: auto-detected)
+ * SONAR_HOST_URL       SonarQube server URL (for Phase 2)
+ * SONAR_TOKEN          SonarQube token (for Phase 2)
+ * SONAR_PROJECT_KEY   SonarQube project key (for Phase 2)
+ * PHASE1_TIMEOUT      Phase 1 timeout in ms (default: 30000)
+ * PHASE2_TIMEOUT      Phase 2 timeout in ms (default: 300000)
+ * ENABLE_I18N_RULES   Enable i18n rules (default: false)
+ */
+
+{
+  "mcpServers": {
+    /* OPTION 1: Basic (RECOMMENDED) */
+    "ai-quality-gate": {
+      "command": "npx",
+      "args": ["-y", "ai-quality-gate"]
+    },
+
+    /* OPTION 2: With custom PROJECT_ROOT */
+    "ai-quality-gate-custom-root": {
+      "command": "npx",
+      "args": ["-y", "ai-quality-gate"],
+      "env": {
+        "PROJECT_ROOT": "/path/to/your/project"
+      }
+    },
+
+    /* OPTION 3: With SonarQube (Phase 2) */
+    "ai-quality-gate-sonar": {
+      "command": "npx",
+      "args": ["-y", "ai-quality-gate"],
+      "env": {
+        "PROJECT_ROOT": "/path/to/your/project",
+        "SONAR_HOST_URL": "http://localhost:9000",
+        "SONAR_TOKEN": "your_sonar_token",
+        "SONAR_PROJECT_KEY": "your_project_key"
+      }
+    },
+
+    /* OPTION 4: Global npm install */
+    "ai-quality-gate-global": {
+      "command": "ai-quality-gate",
+      "args": []
+    }
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "name": "ai-quality-gate",
+  "version": "0.0.1",
+  "description": "MCP Server for AI code quality automation",
+  "main": "dist/server.js",
+  "bin": {
+    "ai-quality-gate": "./dist/server.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "start": "node dist/server.js",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "test:coverage": "vitest run --coverage",
+    "quality:coverage": "yarn typecheck && yarn lint && yarn format:check && vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "clean": "rimraf dist",
+    "quality": "yarn typecheck && yarn lint && yarn format:check && yarn test run",
+    "prepublishOnly": "yarn clean && yarn quality && yarn build"
+  },
+  "keywords": [
+    "mcp",
+    "sonarqube",
+    "eslint",
+    "code-quality",
+    "ai",
+    "cursor"
+  ],
+  "author": "Mustafa Cagri Gumus",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mustafacagri/ai-quality-gate.git"
+  },
+  "homepage": "https://github.com/mustafacagri/ai-quality-gate#readme",
+  "bugs": {
+    "url": "https://github.com/mustafacagri/ai-quality-gate/issues"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.24.2",
+    "@typescript-eslint/parser": "^8.48.1",
+    "axios": "^1.7.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-sonarjs": "^3.0.5",
+    "eslint-plugin-unicorn": "^62.0.0",
+    "inquirer": "^9.3.7",
+    "ts-morph": "^27.0.2",
+    "yaml": "^2.8.3",
+    "zod": "4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/inquirer": "^9.0.9",
+    "@types/node": "^24.10.1",
+    "@typescript-eslint/eslint-plugin": "^8.48.1",
+    "@vitest/coverage-v8": "^4.1.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "eslint-plugin-i18next": "^6.1.3",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-n": "^17.23.1",
+    "eslint-plugin-prettier": "^5.5.4",
+    "eslint-plugin-promise": "^7.2.1",
+    "eslint-plugin-regexp": "^2.10.0",
+    "eslint-plugin-unused-imports": "^4.3.0",
+    "prettier": "^3.7.4",
+    "rimraf": "^6.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.48.1",
+    "vitest": "4.1.2"
+  },
+  "files": [
+    "dist",
+    "src/eslint",
+    "CHANGELOG.md"
+  ],
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+}

@@ -48,8 +48,24 @@ jobs:
           git reset --hard origin/main
 
       # 6️⃣ Publish to npm via OIDC (Trusted Publishers)
+      # semantic-release exits 0 when there is nothing to release; package.json then matches an
+      # already-published version — skip publish to avoid E422 / "cannot publish over".
+      # Provenance requires a public *source* repo; private sources must disable it.
       - name: Publish to npm
-        run: npm publish --provenance --access public
+        run: |
+          set -euo pipefail
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          PUBLISHED=$(npm view "$NAME" version 2>/dev/null || true)
+          if [ -n "$PUBLISHED" ] && [ "$PUBLISHED" = "$VERSION" ]; then
+            echo "Skipping npm publish: v${VERSION} is already on the registry."
+            exit 0
+          fi
+          if [ "${{ github.event.repository.private }}" = "true" ]; then
+            NPM_CONFIG_PROVENANCE=false npm publish --access public
+          else
+            npm publish --provenance --access public
+          fi
 
       # 7️⃣ Publish to GitHub Packages
       - name: Setup Node.js for GitHub Packages
@@ -60,6 +76,15 @@ jobs:
           scope: '@mustafacagri'
 
       - name: Publish to GitHub Packages
-        run: npm publish
+        run: |
+          set -euo pipefail
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          PUBLISHED=$(npm view "$NAME" version 2>/dev/null || true)
+          if [ -n "$PUBLISHED" ] && [ "$PUBLISHED" = "$VERSION" ]; then
+            echo "Skipping GitHub Packages publish: v${VERSION} is already published."
+            exit 0
+          fi
+          npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

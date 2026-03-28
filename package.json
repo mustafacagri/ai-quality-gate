@@ -1,5 +1,6 @@
 {
   "name": "ai-quality-gate",
+  "mcpName": "io.github.mustafacagri/ai-quality-gate",
   "version": "1.0.3",
   "description": "MCP Server for AI code quality automation",
   "main": "dist/server.js",

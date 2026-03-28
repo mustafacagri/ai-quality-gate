@@ -1,0 +1,54 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.mustafacagri/ai-quality-gate",
+  "description": "🚀 Kill the Junior AI Era. 🤖 Level up AI code to automatically Principal standards. 🛡️ Quality Gate ✨",
+  "repository": {
+    "url": "https://github.com/mustafacagri/ai-quality-gate",
+    "source": "github"
+  },
+  "version": "1.0.4",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "ai-quality-gate",
+      "version": "1.0.4",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "PROJECT_ROOT",
+          "description": "Absolute path to the project root for analysis (auto-detected if omitted)",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "SONAR_HOST_URL",
+          "description": "SonarQube server base URL (e.g., http://localhost:9000)",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "SONAR_TOKEN",
+          "description": "SonarQube authentication token",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
+        },
+        {
+          "name": "SONAR_PROJECT_KEY",
+          "description": "SonarQube project key",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "ENABLE_I18N_RULES",
+          "description": "Enable stricter JSX literal checks for i18n projects (true/false)",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

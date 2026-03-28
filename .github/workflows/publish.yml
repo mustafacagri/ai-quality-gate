@@ -8,6 +8,9 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      # Explicit registry so unscoped package name always targets npmjs (not another host).
+      NPM_REGISTRY: https://registry.npmjs.org
     permissions:
       contents: write
       id-token: write
@@ -56,35 +59,18 @@ jobs:
           set -euo pipefail
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
-          PUBLISHED=$(npm view "$NAME" version 2>/dev/null || true)
+          PUBLISHED=$(npm view "$NAME" version --registry "$NPM_REGISTRY" 2>/dev/null || true)
           if [ -n "$PUBLISHED" ] && [ "$PUBLISHED" = "$VERSION" ]; then
-            echo "Skipping npm publish: v${VERSION} is already on the registry."
+            echo "Skipping npm publish: v${VERSION} is already on ${NPM_REGISTRY}."
             exit 0
           fi
           if [ "${{ github.event.repository.private }}" = "true" ]; then
-            NPM_CONFIG_PROVENANCE=false npm publish --access public
+            NPM_CONFIG_PROVENANCE=false npm publish --access public --registry "$NPM_REGISTRY"
           else
-            npm publish --provenance --access public
+            npm publish --provenance --access public --registry "$NPM_REGISTRY"
           fi
 
-      # 7️⃣ Publish to GitHub Packages
-      - name: Setup Node.js for GitHub Packages
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@mustafacagri'
-
-      - name: Publish to GitHub Packages
-        run: |
-          set -euo pipefail
-          NAME=$(node -p "require('./package.json').name")
-          VERSION=$(node -p "require('./package.json').version")
-          PUBLISHED=$(npm view "$NAME" version 2>/dev/null || true)
-          if [ -n "$PUBLISHED" ] && [ "$PUBLISHED" = "$VERSION" ]; then
-            echo "Skipping GitHub Packages publish: v${VERSION} is already published."
-            exit 0
-          fi
-          npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # GitHub Packages requires a scoped package name (@owner/name). This project is unscoped
+      # (ai-quality-gate); a second setup-node with only @scope:registry still leaves the default
+      # registry as npmjs, so `npm publish` here republished to npm and caused E409 duplicate.
+      # Publish to GPR only after renaming to e.g. @mustafacagri/ai-quality-gate and configuring npm.

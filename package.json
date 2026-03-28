@@ -4,7 +4,7 @@
   "description": "MCP Server for AI code quality automation",
   "main": "dist/server.js",
   "bin": {
-    "ai-quality-gate": "./dist/server.js"
+    "ai-quality-gate": "dist/server.js"
   },
   "type": "module",
   "scripts": {
@@ -36,7 +36,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mustafacagri/ai-quality-gate.git"
+    "url": "git+https://github.com/mustafacagri/ai-quality-gate.git"
   },
   "homepage": "https://github.com/mustafacagri/ai-quality-gate#readme",
   "bugs": {

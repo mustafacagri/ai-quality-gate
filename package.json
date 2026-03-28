@@ -1,6 +1,6 @@
 {
   "name": "ai-quality-gate",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "MCP Server for AI code quality automation",
   "main": "dist/server.js",
   "bin": {

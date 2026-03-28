@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/mustafacagri/ai-quality-gate/compare/v1.0.1...v1.0.2) (2026-03-28)
+
+
+### Bug Fixes
+
+* **ci:** add skip-publish logic for npm and GitHub Packages ([261c5c6](https://github.com/mustafacagri/ai-quality-gate/commit/261c5c6c5183a33424f3d2bd3990b441cf9bbeb0))
+
 ## [1.0.1](https://github.com/mustafacagri/ai-quality-gate/compare/v1.0.0...v1.0.1) (2026-03-27)
 
 

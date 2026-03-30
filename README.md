@@ -18,28 +18,28 @@ AI writes code → calls `quality_fix` → Server fixes what it can → Reports 
 
 **Important: ESLint vs Prettier**
 
-| Tool | Source | Config |
-|------|--------|--------|
-| **ESLint** | Project's config (if exists) or MCP's embedded | `.eslintrc.*` / `eslint.config.*` / MCP embedded |
-| **Prettier** | **Project's own** | Project's `prettier.config.mjs` |
+| Tool         | Source                                         | Config                                           |
+| ------------ | ---------------------------------------------- | ------------------------------------------------ |
+| **ESLint**   | Project's config (if exists) or MCP's embedded | `.eslintrc.*` / `eslint.config.*` / MCP embedded |
+| **Prettier** | **Project's own**                              | Project's `prettier.config.mjs`                  |
 
 > ESLint rules are controlled by MCP for consistent quality gates.
 > Prettier uses project's config so formatting matches project preferences.
 
 **Phase 1 Rule Coverage:**
 
-| Plugin | Rules | Description |
-|--------|-------|-------------|
-| SonarJS | 201 | Security, bugs, code smells |
-| Unicorn | 127 | Modern JS best practices |
-| ESLint Core | 108 | JavaScript fundamentals |
-| TypeScript-ESLint | 99 | TypeScript-specific rules |
-| RegExp | 60 | Regex best practices |
-| Import | 11 | Import/export rules |
-| Promise | 10 | Async/await best practices |
-| Node.js (n) | 9 | Node.js specific rules |
-| Unused Imports | 2 | Auto-remove unused imports |
-| **Total** | **627** | |
+| Plugin            | Rules   | Description                 |
+| ----------------- | ------- | --------------------------- |
+| SonarJS           | 201     | Security, bugs, code smells |
+| Unicorn           | 127     | Modern JS best practices    |
+| ESLint Core       | 108     | JavaScript fundamentals     |
+| TypeScript-ESLint | 99      | TypeScript-specific rules   |
+| RegExp            | 60      | Regex best practices        |
+| Import            | 11      | Import/export rules         |
+| Promise           | 10      | Async/await best practices  |
+| Node.js (n)       | 9       | Node.js specific rules      |
+| Unused Imports    | 2       | Auto-remove unused imports  |
+| **Total**         | **627** |                             |
 
 ---
 
@@ -48,7 +48,7 @@ AI writes code → calls `quality_fix` → Server fixes what it can → Reports 
 ### Prerequisites
 
 - **Node.js 18+** on your PATH (`node -v`).
-- **Cursor** (or another MCP-capable editor) with MCP enabled.
+- **Cursor**, **Antigravity**, **OpenCode** (or another MCP-capable editor) with MCP enabled.
 
 Project root is **auto-detected** when `PROJECT_ROOT` is omitted: the server walks up from the MCP process working directory until it finds `package.json` or `tsconfig.json`. Set `PROJECT_ROOT` in `env` only to analyze a different tree than the inferred root.
 
@@ -114,17 +114,53 @@ Requires a running SonarQube instance, `sonar-scanner` available (see [SonarQube
 
 Add an `"env"` object when you need overrides. Merge order for config is **defaults → `.quality-gate.yaml` / `.quality-gate.json` → environment variables**.
 
-| Variable | When to set |
-| -------- | ----------- |
+| Variable              | When to set                                                                                           |
+| --------------------- | ----------------------------------------------------------------------------------------------------- |
 | `QUALITY_GATE_CONFIG` | Absolute path to a specific `.quality-gate.yaml` or `.quality-gate.json` (skips walking directories). |
-| `PROJECT_ROOT` | Force project root if auto-detection is wrong for your layout. |
-| `SONAR_HOST_URL` | SonarQube server URL (with Phase 2). |
-| `SONAR_TOKEN` | SonarQube token (with Phase 2). |
-| `SONAR_PROJECT_KEY` | SonarQube project key (with Phase 2). |
-| `SONAR_SCANNER_PATH` | Full path to `sonar-scanner` if not on `PATH`. |
-| `PHASE1_TIMEOUT` | Phase 1 timeout (ms), default `30000`. |
-| `PHASE2_TIMEOUT` | Phase 2 timeout (ms), default `300000`. |
-| `ENABLE_I18N_RULES` | `true` / `false` — stricter JSX literal checks for i18n projects. |
+| `PROJECT_ROOT`        | Force project root if auto-detection is wrong for your layout.                                        |
+| `SONAR_HOST_URL`      | SonarQube server URL (with Phase 2).                                                                  |
+| `SONAR_TOKEN`         | SonarQube token (with Phase 2).                                                                       |
+| `SONAR_PROJECT_KEY`   | SonarQube project key (with Phase 2).                                                                 |
+| `SONAR_SCANNER_PATH`  | Full path to `sonar-scanner` if not on `PATH`.                                                        |
+| `PHASE1_TIMEOUT`      | Phase 1 timeout (ms), default `30000`.                                                                |
+| `PHASE2_TIMEOUT`      | Phase 2 timeout (ms), default `300000`.                                                               |
+| `ENABLE_I18N_RULES`   | `true` / `false` — stricter JSX literal checks for i18n projects.                                     |
+
+---
+
+### MCP configuration
+
+#### Cursor, Antigravity, etc..
+
+```json
+{
+  "mcpServers": {
+    "ai-quality-gate": {
+      "command": "npx",
+      "args": ["-y", "ai-quality-gate"]
+    }
+  }
+}
+```
+
+#### (OpenCode)
+
+Create or edit **OpenCode config** (typically `~/.config/opencode/opencode.json` or project-level config):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "ai-quality-gate": {
+      "type": "local",
+      "enabled": true,
+      "command": ["npx", "-y", "ai-quality-gate"]
+    }
+  }
+}
+```
+
+Environment variables can be added under the server config if needed (see [C) SonarQube (Phase 2)](#c-sonarqube-phase-2) above).
 
 ---
 
@@ -287,17 +323,17 @@ Treat `i18nIssues` as advisory unless you add your own CI check on top.
 
 All variables are **optional** unless you use Phase 2, which requires **`SONAR_HOST_URL`**, **`SONAR_TOKEN`**, and **`SONAR_PROJECT_KEY`** together.
 
-| Variable | Description | Example |
-| -------- | ----------- | ------- |
-| `QUALITY_GATE_CONFIG` | Absolute path to a `.quality-gate.yaml` or `.quality-gate.json` file. Skips walking parent directories for config discovery. | `/app/ci/quality-gate.yaml` |
-| `PROJECT_ROOT` | Override detected project root. Default: walk up from the process cwd until `package.json` or `tsconfig.json` is found. | `/Users/me/my-repo` |
-| `SONAR_HOST_URL` | SonarQube server base URL (Phase 2). | `http://localhost:9000` |
-| `SONAR_TOKEN` | SonarQube authentication token (Phase 2). Prefer env / secret store; avoid committing. | `sqa_xxx...` |
-| `SONAR_PROJECT_KEY` | SonarQube project key (Phase 2). | `my-project` |
-| `SONAR_SCANNER_PATH` | Full path to the `sonar-scanner` executable if it is not on `PATH`. | `/opt/sonar-scanner/bin/sonar-scanner` |
-| `PHASE1_TIMEOUT` | Phase 1 subprocess timeout in milliseconds. | `30000` (default) |
-| `PHASE2_TIMEOUT` | Phase 2 (Sonar) timeout in milliseconds. | `300000` (default) |
-| `ENABLE_I18N_RULES` | Set to `true` to enable ESLint rules that flag raw string literals in JSX (for i18n-heavy apps). | `false` (default) |
+| Variable              | Description                                                                                                                  | Example                                |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `QUALITY_GATE_CONFIG` | Absolute path to a `.quality-gate.yaml` or `.quality-gate.json` file. Skips walking parent directories for config discovery. | `/app/ci/quality-gate.yaml`            |
+| `PROJECT_ROOT`        | Override detected project root. Default: walk up from the process cwd until `package.json` or `tsconfig.json` is found.      | `/Users/me/my-repo`                    |
+| `SONAR_HOST_URL`      | SonarQube server base URL (Phase 2).                                                                                         | `http://localhost:9000`                |
+| `SONAR_TOKEN`         | SonarQube authentication token (Phase 2). Prefer env / secret store; avoid committing.                                       | `sqa_xxx...`                           |
+| `SONAR_PROJECT_KEY`   | SonarQube project key (Phase 2).                                                                                             | `my-project`                           |
+| `SONAR_SCANNER_PATH`  | Full path to the `sonar-scanner` executable if it is not on `PATH`.                                                          | `/opt/sonar-scanner/bin/sonar-scanner` |
+| `PHASE1_TIMEOUT`      | Phase 1 subprocess timeout in milliseconds.                                                                                  | `30000` (default)                      |
+| `PHASE2_TIMEOUT`      | Phase 2 (Sonar) timeout in milliseconds.                                                                                     | `300000` (default)                     |
+| `ENABLE_I18N_RULES`   | Set to `true` to enable ESLint rules that flag raw string literals in JSX (for i18n-heavy apps).                             | `false` (default)                      |
 
 ---
 
@@ -343,8 +379,7 @@ After ESLint fixes, Prettier runs to ensure consistent formatting:
 
 ```typescript
 // ESLint removes braces but leaves awkward format:
-if (x)
-  return true
+if (x) return true
 
 // Prettier fixes to single line:
 if (x) return true

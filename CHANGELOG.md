@@ -1,3 +1,10 @@
+## [1.0.5](https://github.com/mustafacagri/ai-quality-gate/compare/v1.0.4...v1.0.5) (2026-04-01)
+
+
+### Bug Fixes
+
+* **path:** improve relative path resolution with workspace fallback ([356ef08](https://github.com/mustafacagri/ai-quality-gate/commit/356ef08f341555789c9570de67995e8fd3e1da5c))
+
 ## [1.0.4](https://github.com/mustafacagri/ai-quality-gate/compare/v1.0.3...v1.0.4) (2026-03-28)
 
 

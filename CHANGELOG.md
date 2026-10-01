@@ -1,3 +1,10 @@
+## [1.0.7](https://github.com/mustafacagri/ai-quality-gate/compare/v1.0.6...v1.0.7) (2026-10-01)
+
+
+### Bug Fixes
+
+* make packaged quality checks strict and report tool failures ([bc01215](https://github.com/mustafacagri/ai-quality-gate/commit/bc01215566fa098f9a73fc22713493144af8b998))
+
 ## Unreleased
 
 - Repair named import alias detection with an AST rule, including type imports.

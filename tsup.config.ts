@@ -6,7 +6,7 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  target: 'node18',
+  target: 'node20',
   outDir: 'dist',
   splitting: false,
   treeshake: true,
@@ -32,6 +32,7 @@ export default defineConfig({
 
     // Copy eslint files (ESM format - modern)
     fs.copyFileSync('src/eslint/config.mjs', path.join(eslintDir, 'config.mjs'))
+    fs.copyFileSync('src/eslint/import-alias-rule.mjs', path.join(eslintDir, 'import-alias-rule.mjs'))
     fs.copyFileSync('src/eslint/rules.json', path.join(eslintDir, 'rules.json'))
     fs.copyFileSync('src/eslint/sonarjs-rules.js', path.join(eslintDir, 'sonarjs-rules.js'))
 

@@ -50,6 +50,7 @@ interface PhaseResult {
   passed: boolean
   fixed: FixSummary
   issues: Issue[]
+  checks?: LocalResult['checks']
 }
 
 export class QualityGate {
@@ -208,7 +209,13 @@ export class QualityGate {
 
       if (rollbackResponse) return rollbackResponse
 
-      return this.buildFailResponse(ctx, PHASE.LOCAL, this.summarizePhase1Failure(localResult.issues), localResult)
+      return this.buildFailResponse(
+        ctx,
+        PHASE.LOCAL,
+        this.summarizePhase1Failure(localResult.issues),
+        localResult,
+        localResult.phaseError === undefined ? undefined : { qualityError: localResult.phaseError }
+      )
     }
 
     if (phases === 'phase1') {
@@ -290,6 +297,8 @@ export class QualityGate {
 
     const response = this.buildResponse(params)
 
+    if (result.checks !== undefined) response.checks = result.checks
+
     if (options?.qualityError !== undefined) return { ...response, error: options.qualityError }
 
     return response
@@ -313,7 +322,11 @@ export class QualityGate {
 
     if (ctx.phase2Time > 0) params.phase2Time = ctx.phase2Time
 
-    return this.buildResponse(params)
+    const response = this.buildResponse(params)
+
+    if (result.checks !== undefined) response.checks = result.checks
+
+    return response
   }
 
   /**

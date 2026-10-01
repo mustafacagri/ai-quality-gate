@@ -14,6 +14,8 @@ export const SUPPORTED_CODE_EXTENSIONS = new Set([
   '.jsx',
   '.mjs',
   '.cjs',
+  '.mts',
+  '.cts',
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Frontend Frameworks
@@ -184,14 +186,20 @@ export const isSupportedExtension = (ext: string): boolean => SUPPORTED_CODE_EXT
 /**
  * File extensions that can be linted by ESLint
  */
-export const LINTABLE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx'] as const
+export const TYPESCRIPT_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts'] as const
+export const JAVASCRIPT_EXTENSIONS = ['.js', '.jsx', '.mjs', '.cjs'] as const
+export const LINTABLE_EXTENSIONS = [...TYPESCRIPT_EXTENSIONS, ...JAVASCRIPT_EXTENSIONS] as const
+
+export const isTypeScriptFile = (filePath: string): boolean =>
+  TYPESCRIPT_EXTENSIONS.some(ext => filePath.toLowerCase().endsWith(ext))
 
 export type LintableExtension = (typeof LINTABLE_EXTENSIONS)[number]
 
 /**
  * Check if a file can be linted by ESLint
  */
-export const isLintableFile = (filePath: string): boolean => LINTABLE_EXTENSIONS.some(ext => filePath.endsWith(ext))
+export const isLintableFile = (filePath: string): boolean =>
+  LINTABLE_EXTENSIONS.some(ext => filePath.toLowerCase().endsWith(ext))
 
 // ═══════════════════════════════════════════════════════════════════════════
 // JSON/Config Extensions (Validated separately)
@@ -207,7 +215,8 @@ export type JsonExtension = (typeof JSON_EXTENSIONS)[number]
 /**
  * Check if a file is a JSON file
  */
-export const isJsonFile = (filePath: string): boolean => JSON_EXTENSIONS.some(ext => filePath.endsWith(ext))
+export const isJsonFile = (filePath: string): boolean =>
+  JSON_EXTENSIONS.some(ext => filePath.toLowerCase().endsWith(ext))
 
 /**
  * i18n locale file patterns for consistency checking

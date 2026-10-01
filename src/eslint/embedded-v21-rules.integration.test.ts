@@ -47,17 +47,8 @@ if (x == y) {
 
     fs.writeFileSync(path.join(tmpDir, 'bad.ts'), badSource)
 
-    // `no-restricted-syntax` uses an esquery selector that can throw on some ESLint/esquery
-    // versions when linting minimal files; v2.1.0 rules are independent of that rule.
     const eslint = new ESLint({
       cwd: tmpDir,
-      overrideConfig: [
-        {
-          rules: {
-            'no-restricted-syntax': 'off'
-          }
-        }
-      ],
       overrideConfigFile: resolveEmbeddedEslintConfigPath()
     })
 

@@ -5,89 +5,54 @@
 
 import { spawn } from 'node:child_process'
 import path from 'node:path'
+import os from 'node:os'
+import { createRequire } from 'node:module'
 import * as fs from 'node:fs'
-import type { Config, TypeCheckResult, LintResult, Issue, ESLintResult } from '@/types'
-import { SEVERITY, isLintableFile, DEPRECATED_PATTERN, TYPESCRIPT_ERROR_PATTERN, RULE_NAMES } from '@/constants'
+import type { Config, TypeCheckResult, LintResult, Issue } from '@/types'
+import { ESLintResultsSchema, type ESLintResult } from '@/types/eslint'
+import { isLintableFile, isTypeScriptFile } from '@/constants/extensions'
 import {
-  findProjectEslintConfigFile,
-  groupFilesByTsConfig,
-  isFileRelevantToPaths,
-  resolveEmbeddedEslintConfigPath
-} from '@/utils'
+  CHECK_STATUS,
+  VERIFIER_TOOL_MODULE,
+  STRICT_LINT_ARGUMENTS,
+  TYPECHECK_CACHE_PREFIX,
+  TYPECHECK_CACHE_FILENAME
+} from '@/constants/verification'
+import { EXIT_CODE } from '@/constants/exit-codes'
+import { SEVERITY, DEPRECATED_PATTERN, TYPESCRIPT_ERROR_PATTERN, RULE_NAMES } from '@/constants'
+import { groupFilesByTsConfig, isFileRelevantToPaths, resolveEmbeddedEslintConfigPath } from '@/utils'
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Security: Allowed Commands Whitelist
-// Only these commands can be executed - prevents command injection
+// Security: Node Tool Entrypoints
+// No shell interpolation of selected source paths
 // ═══════════════════════════════════════════════════════════════════════════
 
-const ALLOWED_COMMANDS = new Set(['npx', 'eslint', 'tsc', 'yarn', 'prettier'])
-
-const validateCommand = (command: string): void => {
-  // Allow known commands
-  if (ALLOWED_COMMANDS.has(command)) return
-
-  // Allow local node_modules/.bin binaries (safe - controlled by project)
-  if (command.includes('node_modules') && command.includes('.bin')) return
-
-  throw new Error(`Security: Command '${command}' is not in the allowed list`)
+interface CommandResult {
+  exitCode: number | null
+  signal: NodeJS.Signals | null
+  stdout: string
+  stderr: string
+  error?: string
 }
 
-/**
- * Find local tsc binary in project's node_modules
- * Falls back to yarn tsc if not found
- */
-const findTscCommand = (projectDir: string): { command: string; args: string[] } => {
-  // Try local node_modules/.bin/tsc
-  const localTsc = path.join(projectDir, 'node_modules', '.bin', 'tsc')
-  const localTscWin = `${localTsc}.cmd`
+const packageRequire = createRequire(import.meta.url)
 
-  if (process.platform === 'win32' && fs.existsSync(localTscWin)) return { command: localTscWin, args: [] }
+/** Execute JS tool entrypoints with Node directly, including on Windows; never interpolate file paths in a shell. */
+const findToolCommand = (
+  projectDir: string,
+  tool: (typeof VERIFIER_TOOL_MODULE)[keyof typeof VERIFIER_TOOL_MODULE]
+): { command: string; args: string[] } => {
+  const projectRequire = createRequire(path.join(projectDir, 'package.json'))
+  let packagePath: string
 
-  if (fs.existsSync(localTsc)) return { command: localTsc, args: [] }
-
-  // Fallback to yarn tsc (more reliable on Windows)
-  return { command: 'yarn', args: ['tsc'] }
-}
-
-/**
- * Find ESLint binary - checks MCP package's node_modules first, then project's
- */
-const findEslintCommand = (projectDir: string): { command: string; found: boolean } => {
-  // First: Try MCP package's node_modules (ai-quality-gate/node_modules)
-  const mcpPackageDir = path.join(projectDir, 'ai-quality-gate')
-  const mcpEslint = path.join(mcpPackageDir, 'node_modules', '.bin', 'eslint')
-  const mcpEslintWin = `${mcpEslint}.cmd`
-
-  if (process.platform === 'win32' && fs.existsSync(mcpEslintWin)) return { command: mcpEslintWin, found: true }
-
-  if (fs.existsSync(mcpEslint)) return { command: mcpEslint, found: true }
-
-  // Second: Try project's node_modules
-  const projectEslint = path.join(projectDir, 'node_modules', '.bin', 'eslint')
-  const projectEslintWin = `${projectEslint}.cmd`
-
-  if (process.platform === 'win32' && fs.existsSync(projectEslintWin)) return { command: projectEslintWin, found: true }
-
-  if (fs.existsSync(projectEslint)) return { command: projectEslint, found: true }
-
-  // Fallback to npx (may fail if not in PATH)
-  return { command: 'npx', found: false }
-}
-
-/**
- * Find Prettier binary - checks project's node_modules
- */
-const findPrettierCommand = (projectDir: string): { command: string; found: boolean } => {
-  const projectPrettier = path.join(projectDir, 'node_modules', '.bin', 'prettier')
-  const projectPrettierWin = `${projectPrettier}.cmd`
-
-  if (process.platform === 'win32' && fs.existsSync(projectPrettierWin)) {
-    return { command: projectPrettierWin, found: true }
+  try {
+    packagePath =
+      tool === VERIFIER_TOOL_MODULE.ESLINT ? packageRequire.resolve(tool.package) : projectRequire.resolve(tool.package)
+  } catch {
+    packagePath = packageRequire.resolve(tool.package)
   }
 
-  if (fs.existsSync(projectPrettier)) return { command: projectPrettier, found: true }
-
-  return { command: 'npx', found: false }
+  return { command: process.execPath, args: [path.join(path.dirname(packagePath), tool.binary)] }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -103,17 +68,10 @@ export class Verifier {
     this.embeddedEslintConfig = resolveEmbeddedEslintConfigPath()
   }
 
-  /**
-   * Prefer bundled strict config when present; otherwise root-level project ESLint config; else ESLint auto-discovery.
-   */
   private resolveEslintCliConfigArgs(): string[] {
-    if (fs.existsSync(this.embeddedEslintConfig)) return ['--config', this.embeddedEslintConfig]
+    if (!fs.existsSync(this.embeddedEslintConfig)) throw new Error('Embedded ESLint config is missing')
 
-    const projectConfig = findProjectEslintConfigFile(this.config.projectRoot)
-
-    if (projectConfig !== undefined) return ['--config', projectConfig]
-
-    return []
+    return ['--config', this.embeddedEslintConfig]
   }
 
   /**
@@ -132,76 +90,111 @@ export class Verifier {
   /**
    * Run TypeScript typecheck for a single tsconfig group
    */
-  private async runTypeCheckForGroup(tsConfigPath: string, groupFiles: string[]): Promise<Issue[]> {
+  private async runTypeCheckForGroup(tsConfigPath: string, groupFiles: string[]): Promise<TypeCheckResult> {
     const projectDir = path.dirname(tsConfigPath)
+    let cacheDir: string | undefined
 
     try {
-      // Find tsc binary in project's node_modules or fallback to yarn
-      const tscCmd = findTscCommand(projectDir)
-
+      cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), TYPECHECK_CACHE_PREFIX))
+      const tscCmd = findToolCommand(projectDir, VERIFIER_TOOL_MODULE.TYPESCRIPT)
       const result = await this.execCommand(
         tscCmd.command,
-        [...tscCmd.args, '--noEmit', '--pretty', 'false', '--project', tsConfigPath],
-        {
-          cwd: projectDir,
-          timeout: this.config.phase1Timeout
-        }
+        [
+          ...tscCmd.args,
+          '--noEmit',
+          '--incremental',
+          '--tsBuildInfoFile',
+          path.join(cacheDir, TYPECHECK_CACHE_FILENAME),
+          '--pretty',
+          'false',
+          '--project',
+          tsConfigPath
+        ],
+        { cwd: projectDir, timeout: this.config.phase1Timeout }
       )
 
-      // TypeScript outputs errors to stdout, not stderr
-      // Note: Don't rely only on exit code - parse output for errors too
-      // (Windows shell:true can sometimes misreport exit codes)
-      // Also check for deprecated warnings (they're still errors in TS output)
-      const output = result.stdout || result.stderr
-
-      if (!result.success || TYPESCRIPT_ERROR_PATTERN.test(output) || DEPRECATED_PATTERN.test(output)) {
-        return this.parseTypeCheckErrors(output, groupFiles)
-      }
-
-      return []
+      return this.parseTypeCheckCommand(result, groupFiles)
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
-
-      return [
-        {
-          rule: RULE_NAMES.TYPESCRIPT,
-          file: tsConfigPath,
-          line: 0,
-          message: `TypeScript: typecheck could not run — ${detail}`,
-          severity: SEVERITY.ERROR
-        }
-      ]
+      return {
+        passed: false,
+        status: CHECK_STATUS.ERROR,
+        errors: [this.toolIssue(RULE_NAMES.TYPESCRIPT, tsConfigPath, error)]
+      }
+    } finally {
+      if (cacheDir !== undefined) fs.rmSync(cacheDir, { recursive: true, force: true })
     }
   }
 
-  /**
-   * Run TypeScript type check on files
-   * Groups files by tsconfig for accurate checking
-   */
-  async runTypeCheck(files: string[]): Promise<TypeCheckResult> {
-    const tsFiles = files.filter(f => f.endsWith('.ts') || f.endsWith('.tsx'))
+  private parseTypeCheckCommand(result: CommandResult, groupFiles: string[]): TypeCheckResult {
+    const output = `${result.stdout}\n${result.stderr}`
+    const errors = this.parseTypeCheckErrors(output, groupFiles)
+    this.assertCommandCompleted(result)
 
-    if (tsFiles.length === 0) return { passed: true, errors: [] }
+    if (output.trim().length > 0 && errors.length === 0) {
+      throw new Error(`Unaccounted TypeScript output: ${output.trim()}`)
+    }
+
+    const failed =
+      result.exitCode !== EXIT_CODE.SUCCESS || TYPESCRIPT_ERROR_PATTERN.test(output) || DEPRECATED_PATTERN.test(output)
+
+    if (failed && errors.length === 0) {
+      throw new Error(`TypeScript failed without accounted diagnostics: ${output.trim()}`)
+    }
+
+    return {
+      passed: !failed && errors.length === 0,
+      status: failed || errors.length > 0 ? CHECK_STATUS.FAIL : CHECK_STATUS.PASS,
+      errors
+    }
+  }
+
+  private assertCommandCompleted(result: CommandResult): void {
+    if (result.error !== undefined || result.signal !== null || result.exitCode === null) {
+      throw new Error(
+        result.error ?? `exit ${String(result.exitCode)}, signal ${String(result.signal)}: ${result.stderr}`
+      )
+    }
+  }
+
+  /** Typecheck has full tsconfig context; lint remains limited to the selected paths. */
+  async runTypeCheck(files: string[]): Promise<TypeCheckResult> {
+    const tsFiles = files.filter(isTypeScriptFile).map(file => path.resolve(this.config.projectRoot, file))
+    const missing = tsFiles.filter(file => !fs.existsSync(file) || !fs.statSync(file).isFile())
+
+    if (missing.length > 0) {
+      return {
+        passed: false,
+        status: CHECK_STATUS.ERROR,
+        errors: missing.map(file =>
+          this.toolIssue(RULE_NAMES.TYPESCRIPT, file, new Error('Selected TypeScript source is missing'))
+        )
+      }
+    }
 
     const groups = groupFilesByTsConfig(tsFiles, this.config.projectRoot)
     const allErrors: Issue[] = []
+    let status: TypeCheckResult['status'] = CHECK_STATUS.PASS
 
     for (const [tsConfigPath, groupFiles] of groups) {
       if (tsConfigPath === '__no_tsconfig__') {
         allErrors.push(...this.reportMissingTsConfig(groupFiles))
-
+        status = CHECK_STATUS.ERROR
         continue
       }
 
-      const errors = await this.runTypeCheckForGroup(tsConfigPath, groupFiles)
+      const result = await this.runTypeCheckForGroup(tsConfigPath, groupFiles)
+      allErrors.push(...result.errors)
 
-      allErrors.push(...errors)
+      if (
+        result.status === CHECK_STATUS.ERROR ||
+        (status !== CHECK_STATUS.ERROR && result.status === CHECK_STATUS.FAIL)
+      ) {
+        const { status: resultStatus } = result
+        status = resultStatus
+      }
     }
 
-    return {
-      passed: allErrors.length === 0,
-      errors: allErrors
-    }
+    return { passed: status === CHECK_STATUS.PASS, status, errors: allErrors, checkedProjects: [...groups.keys()] }
   }
 
   /**
@@ -233,8 +226,8 @@ export class Verifier {
     let totalFormatted = 0
 
     for (const [appDir, appFiles] of Object.entries(filesByAppDir)) {
-      const prettierCmd = findPrettierCommand(appDir)
-      const args = prettierCmd.found ? ['--write', ...appFiles] : ['prettier', '--write', ...appFiles]
+      const prettierCmd = findToolCommand(appDir, VERIFIER_TOOL_MODULE.PRETTIER)
+      const args = [...prettierCmd.args, '--write', ...appFiles]
 
       try {
         await this.execCommand(prettierCmd.command, args, {
@@ -291,93 +284,77 @@ export class Verifier {
    * Core lint execution - DRY: shared between runLintFix and runLintCheck
    */
   private async runLint(files: string[], autoFix: boolean): Promise<LintResult> {
-    const lintableFiles = files.filter(f => isLintableFile(f))
+    const lintableFiles = [
+      ...new Set(files.filter(isLintableFile).map(file => path.resolve(this.config.projectRoot, file)))
+    ]
 
-    if (lintableFiles.length === 0) return { passed: true, hasErrors: false, fixedCount: 0, errors: [] }
-
-    const configArg = this.resolveEslintCliConfigArgs()
-
-    // Find ESLint binary
-    const eslintCmd = findEslintCommand(this.config.projectRoot)
-
-    const fixArg = autoFix ? ['--fix'] : []
-
-    // Build args based on whether we found local eslint or using npx
-    const args = eslintCmd.found
-      ? [...configArg, ...fixArg, '--format', 'json', ...lintableFiles]
-      : ['eslint', ...configArg, ...fixArg, '--format', 'json', ...lintableFiles]
+    if (lintableFiles.length === 0) {
+      return { passed: true, status: CHECK_STATUS.PASS, scannedFiles: [], hasErrors: false, fixedCount: 0, errors: [] }
+    }
 
     try {
+      for (const file of lintableFiles) {
+        if (!fs.statSync(file).isFile()) throw new Error(`Selected source is not a file: ${file}`)
+      }
+
+      const eslintCmd = findToolCommand(this.config.projectRoot, VERIFIER_TOOL_MODULE.ESLINT)
+      const args = [
+        ...eslintCmd.args,
+        ...this.resolveEslintCliConfigArgs(),
+        ...(autoFix ? ['--fix'] : []),
+        ...STRICT_LINT_ARGUMENTS,
+        '--',
+        ...lintableFiles
+      ]
       const result = await this.execCommand(eslintCmd.command, args, {
         cwd: this.config.projectRoot,
         timeout: this.config.phase1Timeout
       })
 
-      const output = result.stdout || '[]'
-
-      return this.parseLintResult(output, lintableFiles)
+      return this.parseLintCommand(result, lintableFiles)
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
-
-      return {
-        passed: false,
-        hasErrors: true,
-        fixedCount: 0,
-        errors: [
-          {
-            rule: RULE_NAMES.ESLINT,
-            file: this.config.projectRoot,
-            line: 0,
-            message: `ESLint: command failed — ${detail}`,
-            severity: SEVERITY.ERROR
-          }
-        ]
-      }
+      return this.createParseErrorResult(error)
     }
+  }
+
+  private parseLintCommand(result: CommandResult, lintableFiles: string[]): LintResult {
+    this.assertCommandCompleted(result)
+
+    if (result.exitCode !== EXIT_CODE.SUCCESS && result.exitCode !== EXIT_CODE.QUALITY_FAILED) {
+      throw new Error(`ESLint exit ${String(result.exitCode)}: ${result.stderr}`)
+    }
+
+    const parsed = this.parseLintResult(result.stdout, lintableFiles)
+
+    if (result.exitCode === EXIT_CODE.QUALITY_FAILED && parsed.passed) {
+      throw new Error('ESLint exited with findings but returned no accounted findings')
+    }
+
+    return parsed
   }
 
   private execCommand(
     command: string,
     args: string[],
     options: { cwd: string; timeout: number }
-  ): Promise<{ success: boolean; stdout: string; stderr: string }> {
-    // Security: Validate command against whitelist
-    validateCommand(command)
+  ): Promise<CommandResult> {
+    if (command !== process.execPath) throw new Error('Verifier can only run Node tool entrypoints')
 
     return new Promise(resolve => {
-      // Security note: shell: true is required for Windows npx compatibility
-      // Commands are validated against ALLOWED_COMMANDS whitelist
-      // Args are controlled internally (not from user input)
-
-      const proc = spawn(command, args, {
-        cwd: options.cwd,
-        shell: true,
-        timeout: options.timeout
-      })
-
+      const proc = spawn(command, args, { cwd: options.cwd, shell: false, timeout: options.timeout })
       let stdout = ''
       let stderr = ''
-
       proc.stdout.on('data', (data: Buffer) => (stdout += data.toString()))
-
       proc.stderr.on('data', (data: Buffer) => (stderr += data.toString()))
-
-      proc.on('close', code =>
-        resolve({
-          success: code === 0,
-          stdout,
-          stderr
-        })
-      )
-
-      proc.on('error', error =>
-        resolve({
-          success: false,
-          stdout,
-          stderr: error.message
-        })
-      )
+      proc.on('close', (exitCode, signal) => resolve({ exitCode, signal, stdout, stderr }))
+      proc.on('error', error => resolve({ exitCode: null, signal: null, stdout, stderr, error: error.message }))
     })
+  }
+
+  private toolIssue(rule: string, file: string, error: unknown): Issue {
+    const detail = error instanceof Error ? error.message : String(error)
+
+    return { rule, file, line: 0, message: `Check execution error: ${detail}`, severity: SEVERITY.ERROR }
   }
 
   /**
@@ -430,7 +407,8 @@ export class Verifier {
 
   private parseLintResult(jsonOutput: string, relevantFiles: string[]): LintResult {
     try {
-      const results = JSON.parse(jsonOutput) as ESLintResult[]
+      const raw: unknown = JSON.parse(jsonOutput)
+      const results = ESLintResultsSchema.parse(raw)
 
       return this.processLintResults(results, relevantFiles)
     } catch (parseError) {
@@ -441,18 +419,35 @@ export class Verifier {
   private processLintResults(results: ESLintResult[], relevantFiles: string[]): LintResult {
     const errors: Issue[] = []
     let fixedCount = 0
+    const expected = new Set(relevantFiles.map(file => path.normalize(file)))
+    const scanned = new Set<string>()
 
     for (const result of results) {
-      const isRelevant = isFileRelevantToPaths(result.filePath, relevantFiles)
+      const file = path.normalize(result.filePath)
 
-      if (!isRelevant) continue
+      if (!expected.has(file) || scanned.has(file)) throw new Error(`Unaccounted or duplicate ESLint path: ${file}`)
+
+      scanned.add(file)
+
+      if (result.messages.some(message => message.fatal === true)) {
+        throw new Error(`ESLint parser error in ${file}: ${result.messages.map(message => message.message).join('; ')}`)
+      }
 
       if (result.output !== undefined) fixedCount++
 
       errors.push(...this.extractMessages(result))
     }
 
-    return { passed: errors.length === 0, hasErrors: errors.length > 0, fixedCount, errors }
+    if (scanned.size !== expected.size) throw new Error('ESLint did not account for every selected file')
+
+    return {
+      passed: errors.length === 0,
+      status: errors.length === 0 ? CHECK_STATUS.PASS : CHECK_STATUS.FAIL,
+      scannedFiles: [...scanned],
+      hasErrors: errors.length > 0,
+      fixedCount,
+      errors
+    }
   }
 
   private extractMessages(result: ESLintResult): Issue[] {
@@ -461,7 +456,7 @@ export class Verifier {
       .map(msg => ({
         rule: msg.ruleId ?? RULE_NAMES.ESLINT,
         file: result.filePath,
-        line: msg.line,
+        line: msg.line ?? 0,
         column: msg.column,
         message: msg.message,
         severity: msg.severity === 2 ? SEVERITY.ERROR : SEVERITY.WARNING
@@ -469,21 +464,13 @@ export class Verifier {
   }
 
   private createParseErrorResult(error: unknown): LintResult {
-    const detail = error instanceof Error ? error.message : String(error)
-
     return {
       passed: false,
+      status: CHECK_STATUS.ERROR,
+      scannedFiles: [],
       hasErrors: true,
       fixedCount: 0,
-      errors: [
-        {
-          rule: RULE_NAMES.ESLINT,
-          file: 'unknown',
-          line: 0,
-          message: `ESLint: could not parse JSON output — ${detail}`,
-          severity: SEVERITY.ERROR
-        }
-      ]
+      errors: [this.toolIssue(RULE_NAMES.ESLINT, this.config.projectRoot, error)]
     }
   }
 }

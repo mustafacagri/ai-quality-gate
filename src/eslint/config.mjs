@@ -28,6 +28,7 @@ import promisePlugin from 'eslint-plugin-promise'
 import nPlugin from 'eslint-plugin-n'
 import regexpPlugin from 'eslint-plugin-regexp'
 import i18nextPlugin from 'eslint-plugin-i18next'
+import { importAliasPlugin, IMPORT_ALIAS_RULE_ID } from './import-alias-rule.mjs'
 import prettierConfig from 'eslint-config-prettier'
 
 // ESM __dirname equivalent
@@ -82,19 +83,24 @@ export default [
   // ═══════════════════════════════════════════════════════════════════════════
   // TypeScript Recommended Type-Checked (base config)
   // ═══════════════════════════════════════════════════════════════════════════
-  ...tseslint.configs.recommendedTypeChecked,
+  ...tseslint.configs.recommendedTypeChecked.map(config => ({
+    ...config,
+    files: ['**/*.{ts,tsx,mts,cts}']
+  })),
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TypeScript files - ALL RULES (~700+)
   // ═══════════════════════════════════════════════════════════════════════════
   {
-    files: ['**/*.ts', '**/*.tsx', '**/*.vue'],
+    files: ['**/*.{ts,tsx,mts,cts}'],
     languageOptions: {
       parserOptions: {
-        project: true
+        projectService: true,
+        tsconfigRootDir: process.cwd()
       }
     },
     plugins: {
+      aqg: importAliasPlugin,
       sonarjs,
       unicorn,
       'unused-imports': unusedImports,
@@ -149,14 +155,7 @@ export default [
       // ═══════════════════════════════════════════════════════════════════════
       // Custom: Import alias restriction (no "as" keyword for function imports)
       // ═══════════════════════════════════════════════════════════════════════
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector: 'ImportSpecifier[imported.name!=local.name]',
-          message:
-            'Import alias is not allowed. Use the original function name or rename your local function. Type assertions (as Type) are allowed.'
-        }
-      ],
+      [IMPORT_ALIAS_RULE_ID]: 'error',
 
       // ═══════════════════════════════════════════════════════════════════════
       // Promise - ~17 rules (async/await best practices)
@@ -225,8 +224,10 @@ export default [
   // JavaScript files (no type-aware rules)
   // ═══════════════════════════════════════════════════════════════════════════
   {
-    files: ['**/*.js', '**/*.jsx', '**/*.mjs'],
+    files: ['**/*.{js,jsx,mjs,cjs}'],
+    languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
     plugins: {
+      aqg: importAliasPlugin,
       sonarjs,
       unicorn,
       'unused-imports': unusedImports,
@@ -257,6 +258,7 @@ export default [
       ...regexpPlugin.configs.recommended.rules,
       // ESLint
       ...eslintRules,
+      [IMPORT_ALIAS_RULE_ID]: 'error',
       // Unused imports
       'unused-imports/no-unused-imports': 'error',
       'unused-imports/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }]

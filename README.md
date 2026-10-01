@@ -47,7 +47,7 @@ AI writes code → calls `quality_fix` → Server fixes what it can → Reports 
 
 ### Prerequisites
 
-- **Node.js 18+** on your PATH (`node -v`).
+- **Node.js 20.10+ or 21.1+** on your PATH (`node -v`).
 - **Cursor**, **Antigravity**, **OpenCode** (or another MCP-capable editor) with MCP enabled.
 
 Project root is **auto-detected** when `PROJECT_ROOT` is omitted: the server walks up from the MCP process working directory until it finds `package.json` or `tsconfig.json`. Set `PROJECT_ROOT` in `env` only to analyze a different tree than the inferred root.
@@ -454,7 +454,7 @@ When enabled:
 
 ### MCP: `quality_fix` does not appear
 
-1. **Node.js 18+** — run `node -v` and `npx --version`.
+1. **Node.js 20.10+ or 21.1+** — run `node -v` and `npx --version`.
 2. **Reload** Cursor after editing `mcp.json` (or use the MCP refresh control).
 3. **JSON** — the file must be valid JSON (no trailing commas). Copy from the [MCP configuration](#mcp-configuration-cursor) section if unsure.
 4. **Global install** — if you use `"command": "ai-quality-gate"`, run `npm i -g ai-quality-gate` once so the binary exists.
@@ -550,3 +550,38 @@ MIT © [Mustafa Çağrı Güven](https://github.com/mustafacagri)
 ---
 
 **v0.0.1** — Initial release! MCP `quality_fix`, Phase 1/2 pipeline, CLI, config files, custom rules (see [CHANGELOG](./CHANGELOG.md))
+
+
+### Readonly local verification
+
+Run `ai-quality-gate --check --phase1-only <selected-file ...>` for readonly local
+verification. ESLint checks only the explicitly selected real `.js`, `.jsx`,
+`.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, and `.cts` paths, including executable JS
+configuration and TS declarations. It never expands lint scope through imports or
+creates virtual JS from Vue. Deleted and old rename endpoints must first be
+materialized as real files in an isolated snapshot by the caller, with their base
+content and endpoint identity retained.
+
+TypeScript checks the full nearest `tsconfig.json` project context with `--noEmit`;
+this can include imports and other project files and does not expand ESLint's
+selected scope. TypeScript incremental metadata is redirected to a temporary
+folder outside the project and removed after the check. No source, configuration,
+lockfile, or control file is rewritten by check mode. The MCP `quality_fix` tool
+continues to be a mutating operation; use the CLI check interface for readonly work.
+
+The embedded config uses `typescript-eslint`'s `recommendedTypeChecked` and
+`projectService` for TS sources. TS files must belong to a real tsconfig project.
+JavaScript files use the non-typed lint profile. Named import aliases, including
+type aliases, are checked by an AST rule; unchanged named imports are allowed.
+Warnings fail strict verification (`--max-warnings 0`). Local check JSON includes
+`checks.typecheck` and, when reached, `checks.lint`, with PASS/FAIL/ERROR status,
+checked projects, and actual lint result paths. The existing fail-fast pipeline
+can stop before lint after a failed typecheck or custom rule.
+
+Exit 0 means all reached checks succeeded; exit 1 reports real code findings;
+exit 2 reports configuration, process, parser, or coverage errors. Empty/malformed
+lint output, missing selected files, unexpected/duplicate result paths, fatal
+parser failures, and failed subprocesses cannot become a successful check.
+The installed package carries its embedded parser, lint plugins/resolver, and
+TypeScript runtime dependencies. Supported Node versions are `^20.10.0 || >=21.1.0`,
+the intersection required by the retained lint dependency baseline.

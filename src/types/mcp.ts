@@ -2,6 +2,7 @@
  * MCP Types - Tool parameters and responses
  */
 
+import type { VerificationChecks } from './verification'
 import type { Phase, FixerType } from './core'
 import type { Issue, QualityError } from './issue'
 
@@ -14,6 +15,7 @@ export interface QualityFixParams {
 }
 
 export interface QualityFixResponse {
+  checks?: VerificationChecks
   phase: Phase
   success: boolean
   message: string

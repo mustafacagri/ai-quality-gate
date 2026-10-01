@@ -1,3 +1,12 @@
+## Unreleased
+
+- Repair named import alias detection with an AST rule, including type imports.
+- Ship embedded lint plugins, resolver, and TypeScript as runtime dependencies.
+- Verify all eight real JS/TS extensions using strict typed TS linting.
+- Report process, parser, and coverage failures honestly, with readonly check receipts.
+- Run verifier tool entrypoints directly through Node and keep TypeScript cache writes outside the project.
+- Correct the supported Node engine range to match the existing dependency requirements.
+
 ## [1.0.6](https://github.com/mustafacagri/ai-quality-gate/compare/v1.0.5...v1.0.6) (2026-04-01)
 
 

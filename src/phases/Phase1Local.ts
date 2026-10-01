@@ -8,7 +8,9 @@ import type { Config, Issue, LocalResult, Transaction, FixSummary, Phase1RunOpti
 import { Verifier } from '@/core'
 import { AutoFixer } from '@/fixers'
 import { CustomRulesValidator, JsonValidator, type JsonValidationResult } from '@/validators'
-import { isJsonFile, isLintableFile } from '@/constants'
+import { isJsonFile, isLintableFile } from '@/constants/extensions'
+import { CHECK_STATUS, VERIFICATION_ERROR_CODE } from '@/constants/verification'
+import type { TypeCheckResult, LintResult } from '@/types/verification'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Constants
@@ -148,7 +150,7 @@ export class Phase1Local {
     const typecheck = await this.verifier.runTypeCheck(codeFiles)
 
     if (!typecheck.passed) {
-      return { passed: false, fixed: fixSummary, issues: typecheck.errors }
+      return this.verificationFailure(typecheck, fixSummary)
     }
 
     const customIssuesEarly = await this.runCustomRulesPhase(codeFiles)
@@ -193,7 +195,7 @@ export class Phase1Local {
     const typecheck = await this.verifier.runTypeCheck(codeFiles)
 
     if (!typecheck.passed) {
-      return { passed: false, fixed: fixSummary, issues: typecheck.errors }
+      return { ...this.verificationFailure(typecheck, fixSummary), checks: { typecheck } }
     }
 
     const customIssuesEarly = await this.runCustomRulesPhase(codeFiles)
@@ -203,16 +205,29 @@ export class Phase1Local {
     }
 
     if (!this.config.fixers.eslint) {
-      return { passed: true, fixed: fixSummary, issues: [] }
+      return { passed: true, fixed: fixSummary, issues: [], checks: { typecheck } }
     }
 
     const lintCheck = await this.verifier.runLintCheck(codeFiles)
 
     if (!lintCheck.passed) {
-      return { passed: false, fixed: fixSummary, issues: lintCheck.errors }
+      return { ...this.verificationFailure(lintCheck, fixSummary), checks: { typecheck, lint: lintCheck } }
     }
 
-    return { passed: true, fixed: fixSummary, issues: [] }
+    return { passed: true, fixed: fixSummary, issues: [], checks: { typecheck, lint: lintCheck } }
+  }
+
+  private verificationFailure(result: LintResult | TypeCheckResult, fixed: FixSummary): LocalResult {
+    const response: LocalResult = { passed: false, fixed, issues: result.errors }
+
+    if (result.status === CHECK_STATUS.ERROR) {
+      response.phaseError = {
+        code: 'fixedCount' in result ? VERIFICATION_ERROR_CODE.ESLINT : VERIFICATION_ERROR_CODE.TYPESCRIPT,
+        message: result.errors.map(issue => issue.message).join('; ')
+      }
+    }
+
+    return response
   }
 
   /**
@@ -242,7 +257,7 @@ export class Phase1Local {
     const recheckType = await this.verifier.runTypeCheck(codeFiles)
 
     if (!recheckType.passed) {
-      return { passed: false, fixed: fixSummary, issues: recheckType.errors }
+      return this.verificationFailure(recheckType, fixSummary)
     }
 
     const customIssues = await this.runCustomRulesPhase(codeFiles)
@@ -255,7 +270,7 @@ export class Phase1Local {
       const recheckLint = await this.verifier.runLintCheck(codeFiles)
 
       if (!recheckLint.passed) {
-        return { passed: false, fixed: fixSummary, issues: recheckLint.errors }
+        return this.verificationFailure(recheckLint, fixSummary)
       }
     }
 

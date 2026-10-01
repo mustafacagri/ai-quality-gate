@@ -2,6 +2,7 @@
  * Issue Types - Quality issues and errors
  */
 
+import type { VERIFICATION_ERROR_CODE } from '@/constants/verification'
 import type { Severity } from './core'
 
 export interface Issue {
@@ -14,8 +15,8 @@ export interface Issue {
 }
 
 export type ErrorCode =
+  | (typeof VERIFICATION_ERROR_CODE)[keyof typeof VERIFICATION_ERROR_CODE]
   | 'CONFIG_INVALID'
-  | 'LINT_FAILED'
   | 'PERSISTENT_FAILURE'
   | 'ROLLBACK_FAILED'
   | 'SONAR_API_ERROR'
@@ -24,7 +25,6 @@ export type ErrorCode =
   | 'SONAR_TIMEOUT'
   | 'TRANSFORM_FAILED'
   | 'TSCONFIG_NOT_FOUND'
-  | 'TYPECHECK_FAILED'
   | 'UNEXPECTED_ERROR'
   | 'VERIFICATION_FAILED'
 

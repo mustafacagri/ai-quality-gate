@@ -11,6 +11,12 @@ jobs:
     env:
       # Explicit registry so unscoped package name always targets npmjs (not another host).
       NPM_REGISTRY: https://registry.npmjs.org
+      # mcp-publisher runs in a job that can mint OIDC tokens, so it is pinned and checked against a known hash
+      # instead of fetching "latest". When the registry starts answering "invalid audience", bump both values
+      # (hash: `gh api repos/modelcontextprotocol/registry/releases/tags/<tag>`, asset mcp-publisher_linux_amd64.tar.gz).
+      MCP_PUBLISHER_VERSION: v1.8.1
+      MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+      MCP_REGISTRY_URL: https://registry.modelcontextprotocol.io
     permissions:
       contents: write
       id-token: write
@@ -72,6 +78,51 @@ jobs:
           else
             npm publish --provenance --access public --registry "$NPM_REGISTRY"
           fi
+
+      # 7️⃣ Publish to the MCP Registry (OIDC, no stored token)
+      # Runs after npm: the registry checks that this version of the package exists there. server.json is kept at
+      # the release version by scripts/sync-server-json.mjs (called from semantic-release, see .releaserc), so a
+      # push that releases nothing finds its version already listed and publishes nothing.
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          archive="mcp-publisher_linux_amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${archive}"
+          echo "${MCP_PUBLISHER_SHA256}  $RUNNER_TEMP/${archive}" | sha256sum --check -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" mcp-publisher
+          "$RUNNER_TEMP/mcp-publisher" --version
+
+      - name: Publish to MCP Registry
+        run: |
+          set -euo pipefail
+          PUBLISHER="$RUNNER_TEMP/mcp-publisher"
+          SERVER=$(node -p "require('./server.json').name")
+          VERSION=$(node -p "require('./server.json').version")
+          PACKAGE=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if [ "$VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "::error::server.json is at ${VERSION} but package.json is at ${PACKAGE_VERSION}"
+            exit 1
+          fi
+          # npm can take minutes to serve a version it has just accepted, and the registry reads it from there.
+          for attempt in $(seq 1 20); do
+            SEEN=$(npm view "${PACKAGE}@${VERSION}" version --registry "$NPM_REGISTRY" 2>/dev/null || true)
+            [ "$SEEN" = "$VERSION" ] && break
+            if [ "$attempt" = 20 ]; then
+              echo "::error::${PACKAGE}@${VERSION} is not on ${NPM_REGISTRY} after 5 minutes"
+              exit 1
+            fi
+            sleep 15
+          done
+          # Logging in on every run, even when nothing is published, shows a broken OIDC setup before a release needs it.
+          "$PUBLISHER" login github-oidc
+          STATUS=$(curl -sS -o /dev/null -w '%{http_code}' "${MCP_REGISTRY_URL}/v0/servers/${SERVER//\//%2F}/versions/${VERSION}")
+          case "$STATUS" in
+            200) echo "Skipping MCP Registry: ${SERVER} ${VERSION} is already listed." ;;
+            404) "$PUBLISHER" publish ;;
+            *) echo "::error::MCP Registry answered ${STATUS} when asked about ${SERVER} ${VERSION}"; exit 1 ;;
+          esac
 
       # GitHub Packages requires a scoped package name (@owner/name). This project is unscoped
       # (ai-quality-gate); a second setup-node with only @scope:registry still leaves the default

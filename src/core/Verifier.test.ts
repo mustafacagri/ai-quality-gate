@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { RULE_NAMES } from '@/constants/rules'
 import { Verifier } from '@/core/Verifier'
@@ -97,6 +97,28 @@ describe('Verifier', () => {
       expect(partial.formattedCount).toBe(1)
       expect(partial.issues[0]?.file).toBe(broken)
     } finally {
+      fs.rmSync(dir, { force: true, recursive: true })
+    }
+  })
+
+  it('still names the file Prettier failed on when the environment makes Prettier colour its output', async () => {
+    // Prettier colours `[error]` whenever CI is set (GitHub Actions sets it), which used to hide the failing file.
+    vi.stubEnv('CI', 'true')
+    const dir = fs.mkdtempSync(path.join(process.cwd(), '.aqg-prettier-'))
+    const messy = path.join(dir, 'a-messy.ts')
+    const broken = path.join(dir, 'b-broken.ts')
+    fs.writeFileSync(messy, 'export const ready=true\n', 'utf8')
+    fs.writeFileSync(broken, 'const value =\n', 'utf8')
+    const verifier = new Verifier({ ...baseConfig(), projectRoot: process.cwd() })
+
+    try {
+      const partial = await verifier.runPrettier([messy, broken])
+
+      expect(partial.success).toBe(false)
+      expect(partial.issues[0]?.file).toBe(broken)
+      expect(partial.issues[0]?.message).not.toContain('\u001B')
+    } finally {
+      vi.unstubAllEnvs()
       fs.rmSync(dir, { force: true, recursive: true })
     }
   })

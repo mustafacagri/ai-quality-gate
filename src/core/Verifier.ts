@@ -8,7 +8,7 @@ import * as fs from 'node:fs'
 import type { Config, TypeCheckResult, LintResult, Issue, PrettierFormatResult } from '@/types'
 import { ESLintResultsSchema, type ESLintResult } from '@/types/eslint'
 import { isLintableFile, isPrettierFormattableFile } from '@/constants/extensions'
-import { CHECK_STATUS, VERIFIER_TOOL_MODULE, STRICT_LINT_ARGUMENTS } from '@/constants/verification'
+import { CHECK_STATUS, PRETTIER_FLAG, VERIFIER_TOOL_MODULE, STRICT_LINT_ARGUMENTS } from '@/constants/verification'
 import { PACKAGE_JSON } from '@/constants/project-root'
 import { EXIT_CODE } from '@/constants/exit-codes'
 import { SEVERITY, RULE_NAMES, UNKNOWN_ISSUE_LINE } from '@/constants'
@@ -114,7 +114,7 @@ export class Verifier {
     for (const file of appFiles) before.set(path.resolve(file), fs.readFileSync(file, 'utf8'))
 
     const prettierCmd = findToolCommand(appDir, VERIFIER_TOOL_MODULE.PRETTIER)
-    const args = [...prettierCmd.args, '--write', ...appFiles]
+    const args = [...prettierCmd.args, PRETTIER_FLAG.WRITE, PRETTIER_FLAG.NO_COLOR, ...appFiles]
     const result = await this.execCommand(prettierCmd.command, args, {
       cwd: appDir,
       timeout: this.config.phase1Timeout

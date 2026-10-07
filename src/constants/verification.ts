@@ -17,6 +17,8 @@ export const TYPECHECK_FLAG = {
   PROJECT: '--project',
   LIST_FILES_ONLY: '--listFilesOnly'
 } as const
+/** Flags of `prettier`. It colours `[error]` whenever `CI` is set, which would hide the line the failing file is read from. */
+export const PRETTIER_FLAG = { WRITE: '--write', NO_COLOR: '--no-color' } as const
 export const STRICT_LINT_ARGUMENTS = ['--max-warnings', '0', '--format', 'json', '--no-ignore'] as const
 export const VERIFICATION_ERROR_CODE = { TYPESCRIPT: 'TYPECHECK_FAILED', ESLINT: 'LINT_FAILED' } as const
 export const TYPECHECK_CACHE_PREFIX = 'aqg-typecheck-'

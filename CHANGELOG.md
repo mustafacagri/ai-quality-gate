@@ -1,3 +1,15 @@
+# [1.1.0](https://github.com/mustafacagri/ai-quality-gate/compare/v1.0.7...v1.1.0) (2026-10-07)
+
+
+### Bug Fixes
+
+* pass --no-color to Prettier so the failing file is still named when CI is set ([b9f8c62](https://github.com/mustafacagri/ai-quality-gate/commit/b9f8c620ac223ba74526b81c6da1f196303150c9))
+
+
+### Features
+
+* lint and type-check Vue SFCs, keep verified auto-fixes when findings remain ([7f6cd06](https://github.com/mustafacagri/ai-quality-gate/commit/7f6cd06a53bb6e182c8152077474316b13a52878))
+
 ## [1.0.7](https://github.com/mustafacagri/ai-quality-gate/compare/v1.0.6...v1.0.7) (2026-10-01)
 
 

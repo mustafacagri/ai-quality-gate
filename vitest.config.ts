@@ -5,6 +5,10 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // Many tests run the real tsc, vue-tsc, ESLint or Prettier; the slowest take ~4.5s on a fast machine, so the 5s
+    // default would fail them on a shared CI runner.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],

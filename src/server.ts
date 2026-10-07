@@ -14,6 +14,7 @@ import { runCli } from '@/cli/run'
 import { getPackageVersion } from '@/utils/packageVersion'
 
 import { runQualityFixForFiles, toToolResponse } from '@/server/qualityFixHandlers'
+import { errorMessage } from '@/utils/errorMessage'
 
 const PACKAGE_VERSION = getPackageVersion()
 
@@ -25,8 +26,14 @@ Phase 2 (Server, optional): Deep SonarQube analysis (only if configured)
 🎯 Phase 1 is comprehensive - most users won't need Phase 2!
 
 Auto-fixes (ESLint + AST):
-- Curly braces on single-statement if (AST)
-- Single-expression arrow bodies where safe (AST)
+- Curly braces on single-statement if, keeping a terminating semicolon (AST)
+- Return-only arrow bodies, keeping the original signature (AST)
+
+Vue SFCs: <script> and <script setup> are linted and auto-fixed in place, and a lang="ts" script is type checked with vue-tsc. A Vue file the compiler rejects stops the run before any edit.
+
+When only findings the fixers cannot fix remain, the fixes already made are kept: "fixed" counts them, "remaining" lists what to fix by hand (success is false). If a fixer breaks the code (type error, SFC compile error, a tool failing to run) every edit is rolled back; those edits appear as "attempted", not "fixed".
+
+If the same failure comes back unchanged three times in a row, error.code is PERSISTENT_FAILURE: stop retrying and ask the human.
 
 Code Quality Limits:
 - File: max 400 lines
@@ -86,7 +93,7 @@ server.registerTool(
         content: [
           {
             type: 'text',
-            text: error instanceof Error ? error.message : String(error)
+            text: errorMessage(error)
           }
         ],
         isError: true

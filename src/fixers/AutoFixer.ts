@@ -8,14 +8,17 @@
  */
 
 import { DEFAULT_FIXER_CONFIG, type Fixer, type FixSummary, type Transaction, type FixerConfig } from '@/types'
-import { FIXER_TYPE } from '@/constants'
+import { FIXER_TYPE, isLintableFile } from '@/constants'
 import { CurlyBracesFixer } from './CurlyBracesFixer'
 import { SingleLineArrowFixer } from './SingleLineArrowFixer'
+import { errorMessage } from '@/utils/errorMessage'
+import { emptyFixSummary } from '@/utils/fixSummary'
 // Note: FunctionToArrowFixer removed - utility functions should use named function declarations
 // for better stack traces, hoisting, and debuggability (Principal level decision)
 
 export class AutoFixer {
   private readonly fixers: Fixer[]
+  private skipped: string[] = []
 
   constructor(fixerConfig: FixerConfig = DEFAULT_FIXER_CONFIG) {
     this.fixers = []
@@ -33,13 +36,7 @@ export class AutoFixer {
    * @returns Summary of fixes applied
    */
   async scanAndFix(files: string[], transaction: Transaction): Promise<FixSummary> {
-    const summary: FixSummary = {
-      eslint: 0,
-      curlyBraces: 0,
-      singleLineArrow: 0,
-      prettier: 0,
-      json: 0
-    }
+    const summary = emptyFixSummary()
 
     const eligibleFiles = this.filterEligibleFiles(files)
 
@@ -51,12 +48,10 @@ export class AutoFixer {
   }
 
   /**
-   * Filter to TypeScript/JavaScript files only
+   * Lintable sources, including Vue SFCs. Script blocks are edited in place.
    */
   private filterEligibleFiles(files: string[]): string[] {
-    const extensions = ['.ts', '.tsx', '.js', '.jsx']
-
-    return files.filter(file => extensions.some(ext => file.endsWith(ext)))
+    return files.filter(file => isLintableFile(file))
   }
 
   /**
@@ -80,7 +75,20 @@ export class AutoFixer {
       if (fixes.length > 0) console.error(`[AutoFixer] ${fixer.name}: ${fixes.length} fixes in ${file}`)
     } catch (error) {
       console.error(`[AutoFixer] Error in ${fixer.name} for ${file}:`, error)
+
+      this.skipped.push(`${fixer.name} skipped ${file}: ${errorMessage(error)}`)
     }
+
+    this.skipped.push(...(fixer.takeSkipped?.() ?? []))
+  }
+
+  /** Files a fixer could not process since the last call, one line each. Clears the list. */
+  drainSkipped(): string[] {
+    const drained = this.skipped
+
+    this.skipped = []
+
+    return drained
   }
 
   /**

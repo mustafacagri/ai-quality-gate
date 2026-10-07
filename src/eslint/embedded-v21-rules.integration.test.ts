@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { resolveEmbeddedEslintConfigPath } from '@/utils/embeddedEslintConfigPath'
 
-describe('embedded ESLint config (v2.1.0 rules)', () => {
+describe('embedded ESLint config (v2.1.0 rules)', { timeout: 30_000 }, () => {
   let tmpDir: string | undefined
 
   afterEach(() => {

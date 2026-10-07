@@ -222,7 +222,7 @@ export default tseslint.config(
   // Vitest unit tests — temp dirs, longer test functions, relaxed Sonar noise
   // ═══════════════════════════════════════════════════════════════════════════
   {
-    files: ['**/*.test.ts'],
+    files: ['**/*.test.ts', '**/fixtures/**/*.ts'],
     rules: {
       '@typescript-eslint/no-magic-numbers': 'off',
       'import/first': 'off',

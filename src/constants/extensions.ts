@@ -4,6 +4,8 @@
  * Documentation (.md), config (.json, .yml) etc. are skipped
  */
 
+export const VUE_SFC_EXTENSION = '.vue' as const
+
 export const SUPPORTED_CODE_EXTENSIONS = new Set([
   // ═══════════════════════════════════════════════════════════════════════════
   // JavaScript/TypeScript (Primary Focus)
@@ -20,7 +22,7 @@ export const SUPPORTED_CODE_EXTENSIONS = new Set([
   // ═══════════════════════════════════════════════════════════════════════════
   // Frontend Frameworks
   // ═══════════════════════════════════════════════════════════════════════════
-  '.vue',
+  VUE_SFC_EXTENSION,
   '.svelte',
   '.astro',
 
@@ -188,18 +190,30 @@ export const isSupportedExtension = (ext: string): boolean => SUPPORTED_CODE_EXT
  */
 export const TYPESCRIPT_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts'] as const
 export const JAVASCRIPT_EXTENSIONS = ['.js', '.jsx', '.mjs', '.cjs'] as const
-export const LINTABLE_EXTENSIONS = [...TYPESCRIPT_EXTENSIONS, ...JAVASCRIPT_EXTENSIONS] as const
+export const LINTABLE_EXTENSIONS = [...TYPESCRIPT_EXTENSIONS, ...JAVASCRIPT_EXTENSIONS, VUE_SFC_EXTENSION] as const
 
-export const isTypeScriptFile = (filePath: string): boolean =>
-  TYPESCRIPT_EXTENSIONS.some(ext => filePath.toLowerCase().endsWith(ext))
+const endsWithExtension = (filePath: string, extensions: readonly string[]): boolean => {
+  const normalized = filePath.toLowerCase()
+
+  return extensions.some(extension => normalized.endsWith(extension))
+}
+
+export const isTypeScriptFile = (filePath: string): boolean => endsWithExtension(filePath, TYPESCRIPT_EXTENSIONS)
+
+export const isVueSfc = (filePath: string): boolean => endsWithExtension(filePath, [VUE_SFC_EXTENSION])
+
+/** Sources in which `<` can start a JSX element, so a TypeScript arrow `<T>(x) => x` would be ambiguous. */
+const JSX_EXTENSIONS = ['.tsx', '.jsx'] as const
+
+export const isJsxSource = (filePath: string): boolean => endsWithExtension(filePath, JSX_EXTENSIONS)
 
 export type LintableExtension = (typeof LINTABLE_EXTENSIONS)[number]
 
 /**
- * Check if a file can be linted by ESLint
+ * Check if a file can be linted by ESLint.
+ * `.vue` is linted in place: script blocks only, via vue-eslint-parser.
  */
-export const isLintableFile = (filePath: string): boolean =>
-  LINTABLE_EXTENSIONS.some(ext => filePath.toLowerCase().endsWith(ext))
+export const isLintableFile = (filePath: string): boolean => endsWithExtension(filePath, LINTABLE_EXTENSIONS)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // JSON/Config Extensions (Validated separately)
@@ -215,8 +229,11 @@ export type JsonExtension = (typeof JSON_EXTENSIONS)[number]
 /**
  * Check if a file is a JSON file
  */
-export const isJsonFile = (filePath: string): boolean =>
-  JSON_EXTENSIONS.some(ext => filePath.toLowerCase().endsWith(ext))
+export const isJsonFile = (filePath: string): boolean => endsWithExtension(filePath, JSON_EXTENSIONS)
+
+export const PRETTIER_EXTENSIONS = [...LINTABLE_EXTENSIONS, ...JSON_EXTENSIONS] as const
+
+export const isPrettierFormattableFile = (filePath: string): boolean => endsWithExtension(filePath, PRETTIER_EXTENSIONS)
 
 /**
  * i18n locale file patterns for consistency checking

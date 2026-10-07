@@ -3,12 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { filterCodeFiles } from '@/utils/codeFileFilter'
 
 describe('filterCodeFiles', () => {
-  it('places .ts, .js, .tsx, and .jsx paths in codeFiles', () => {
-    const input = ['src/a.ts', 'lib/b.js', 'ui/C.tsx', 'app/D.jsx']
+  it('places .ts, .js, .tsx, .jsx, and .vue paths in codeFiles', () => {
+    const input = ['src/a.ts', 'lib/b.js', 'ui/C.tsx', 'app/D.jsx', 'components/Widget.vue']
     const { codeFiles, skippedFiles } = filterCodeFiles(input)
 
     expect(codeFiles).toEqual(expect.arrayContaining(input))
-    expect(codeFiles).toHaveLength(4)
+    expect(codeFiles).toHaveLength(input.length)
     expect(skippedFiles).toHaveLength(0)
   })
 
@@ -17,7 +17,7 @@ describe('filterCodeFiles', () => {
     const { codeFiles, skippedFiles } = filterCodeFiles(input)
 
     expect(skippedFiles).toEqual(expect.arrayContaining(input))
-    expect(skippedFiles).toHaveLength(3)
+    expect(skippedFiles).toHaveLength(input.length)
     expect(codeFiles).toHaveLength(0)
   })
 

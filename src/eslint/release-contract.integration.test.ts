@@ -4,7 +4,9 @@ import path from 'node:path'
 
 import { ESLint } from 'eslint'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 
+import { VUE_SFC_EXTENSION } from '@/constants/extensions'
 import { resolveEmbeddedEslintConfigPath } from '@/utils/embeddedEslintConfigPath'
 
 let projectRoot: string
@@ -19,6 +21,23 @@ beforeEach(() => {
 })
 afterEach(() => fs.rmSync(projectRoot, { recursive: true, force: true }))
 
+/** `calculateConfigForFile` resolves to `undefined` for a path no config block applies to. */
+const ResolvedConfigSchema = z
+  .looseObject({
+    languageOptions: z
+      .looseObject({
+        parserOptions: z.looseObject({ extraFileExtensions: z.array(z.string()).optional() }).optional()
+      })
+      .optional()
+  })
+  .optional()
+
+async function extraFileExtensionsFor(name: string): Promise<string[] | undefined> {
+  const resolved = ResolvedConfigSchema.parse(await eslint.calculateConfigForFile(name))
+
+  return resolved?.languageOptions?.parserOptions?.extraFileExtensions
+}
+
 async function messagesFor(name: string, source: string) {
   fs.writeFileSync(path.join(projectRoot, name), source)
   const results = await eslint.lintFiles([name])
@@ -26,7 +45,7 @@ async function messagesFor(name: string, source: string) {
   return results.flatMap(result => result.messages)
 }
 
-describe('shipped configuration release contract', () => {
+describe('shipped configuration release contract', { timeout: 30_000 }, () => {
   it.each([
     ['ordinary', "import { readFileSync } from 'node:fs'\nexport const content = readFileSync\n", false],
     ['multiline alias', "import {\n readFileSync as read\n} from 'node:fs'\nexport const content = read\n", true],
@@ -58,7 +77,49 @@ describe('shipped configuration release contract', () => {
     const config = await messagesFor('runtime.config.cjs', 'module.exports = { ready: 1 == 2 }\n')
     expect(config.some(message => message.ruleId === 'eqeqeq')).toBe(true)
   })
+})
 
+describe('Vue single-file component script lint', { timeout: 30_000 }, () => {
+  it('uses the same Vue extension as the gate, so the two copies cannot drift apart', async () => {
+    expect(await extraFileExtensionsFor(`Widget${VUE_SFC_EXTENSION}`)).toEqual([VUE_SFC_EXTENSION])
+    expect(await extraFileExtensionsFor(`Widget${VUE_SFC_EXTENSION}x`)).toBeUndefined()
+  })
+
+  it('lints Vue script blocks in place and does not treat template text as JavaScript', async () => {
+    const source = `<template>
+  <p>1 == 2</p>
+</template>
+<script setup lang="ts">
+var value = 1
+if (value == 2) console.log(value)
+Promise.resolve(true)
+</script>
+`
+    const messages = await messagesFor('Widget.vue', source)
+
+    expect(messages.some(message => message.fatal)).toBe(false)
+    const equality = messages.filter(message => message.ruleId === 'eqeqeq')
+    expect(equality.length).toBeGreaterThan(0)
+    expect(equality.every(message => message.line !== 2)).toBe(true)
+    expect(messages.some(message => message.ruleId === 'no-var')).toBe(true)
+    expect(messages.some(message => message.ruleId === '@typescript-eslint/no-floating-promises')).toBe(false)
+  })
+
+  it('lints a plain script block inside a Vue file', async () => {
+    const source = `<template><p>ok</p></template>
+<script>
+var value = 1
+if (value == 2) value = 3
+</script>
+`
+    const messages = await messagesFor('Plain.vue', source)
+
+    expect(messages.some(message => message.fatal)).toBe(false)
+    expect(messages.some(message => message.ruleId === 'eqeqeq')).toBe(true)
+  })
+})
+
+describe('type-aware TypeScript lint', { timeout: 30_000 }, () => {
   it('uses real type information for floating promises and unsafe values', async () => {
     const floating = await messagesFor('floating.ts', 'export function dispatch(): void { Promise.resolve(true) }\n')
     expect(floating.some(message => message.ruleId === '@typescript-eslint/no-floating-promises')).toBe(true)

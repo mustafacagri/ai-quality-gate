@@ -1,37 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { TransactionManager } from '@/core/TransactionManager'
 import { QualityGate } from '@/core/QualityGate'
 import { RULE_NAMES } from '@/constants/rules'
-import { DEFAULT_FIXER_CONFIG, type Config, type FixSummary, type Transaction } from '@/types'
-
-const baseConfig = (): Config => ({
-  projectRoot: '/tmp/aqg-project',
-  phase1Timeout: 30_000,
-  phase2Timeout: 300_000,
-  enableI18nRules: false,
-  fixers: { ...DEFAULT_FIXER_CONFIG }
-})
-
-const emptyFix = (): FixSummary => ({
-  eslint: 0,
-  curlyBraces: 0,
-  singleLineArrow: 0,
-  prettier: 0,
-  json: 0
-})
-
-const mockTransactionManager = (rollback: () => Promise<void>): TransactionManager => {
-  const mockTx: Transaction = {
-    recordChange: vi.fn(),
-    commit: vi.fn().mockResolvedValue(undefined),
-    rollback
-  }
-
-  return {
-    begin: () => mockTx
-  } as unknown as TransactionManager
-}
+import { baseConfig, emptyFix, mockTransactionManager } from '@/core/fixtures/gateFixtures'
 
 describe('QualityGate', () => {
   it('calls transaction rollback when phase 1 fails', async () => {
@@ -69,17 +40,19 @@ describe('QualityGate', () => {
 
     expect(result.success).toBe(false)
     expect(result.message).toMatch(/TypeScript: 1 issue in a\.ts/)
+    expect(result.fixedCount).toBe(0)
+    expect(result.attempted).toBeUndefined()
     expect(rollback).toHaveBeenCalledTimes(1)
   })
 
-  it('calls transaction rollback when phase 2 fails', async () => {
+  it('keeps the phase 1 edits and commits when phase 2 finds issues', async () => {
     const rollback = vi.fn().mockResolvedValue(undefined)
     const mockTm = mockTransactionManager(rollback)
 
     const phase1 = {
       run: vi.fn().mockResolvedValue({
         passed: true,
-        fixed: emptyFix(),
+        fixed: { ...emptyFix(), eslint: 2 },
         issues: []
       })
     }
@@ -110,6 +83,38 @@ describe('QualityGate', () => {
 
     expect(result.success).toBe(false)
     expect(result.phase).toBe('server')
+    expect(result.fixedCount).toBe(2)
+    expect(result.fixed.eslint).toBe(2)
+    expect(result.attempted).toBeUndefined()
+    expect(result.remaining.map(issue => issue.rule)).toEqual(['sonarqube'])
+    expect(result.message).toMatch(/^Kept 2 auto-fixes\./)
+    expect(rollback).not.toHaveBeenCalled()
+  })
+
+  it('keeps attempted edits when a later phase throws and the rollback succeeds', async () => {
+    const rollback = vi.fn().mockResolvedValue(undefined)
+    const mockTm = mockTransactionManager(rollback)
+
+    const gate = new QualityGate(baseConfig(), {
+      transactionManager: mockTm,
+      phase1: {
+        run: vi.fn().mockResolvedValue({
+          passed: true,
+          fixed: { ...emptyFix(), eslint: 2, json: 1 },
+          issues: []
+        })
+      },
+      phase2: { isConfigured: () => true, run: vi.fn().mockRejectedValue(new Error('phase 2 exploded')) }
+    })
+
+    const result = await gate.run(['src/b.ts'])
+
+    expect(result.success).toBe(false)
+    expect(result.error?.code).toBe('UNEXPECTED_ERROR')
+    expect(result.fixedCount).toBe(0)
+    expect(result.attemptedCount).toBe(2)
+    expect(result.attempted?.eslint).toBe(2)
+    expect(result.attempted?.json).toBe(0)
     expect(rollback).toHaveBeenCalledTimes(1)
   })
 
@@ -336,14 +341,14 @@ describe('QualityGate', () => {
     expect(result.message).toMatch(/Phase 1 complete/)
   })
 
-  it('computes totalIssues as fixed plus remaining on failure', async () => {
+  it('reports rolled-back edits as attempted and keeps durable fix counts at zero', async () => {
     const rollback = vi.fn().mockResolvedValue(undefined)
     const mockTm = mockTransactionManager(rollback)
 
     const phase1 = {
       run: vi.fn().mockResolvedValue({
         passed: false,
-        fixed: { eslint: 3, curlyBraces: 0, singleLineArrow: 0, prettier: 0, json: 0 },
+        fixed: { eslint: 3, curlyBraces: 0, singleLineArrow: 0, prettier: 0, json: 1 },
         issues: [
           { rule: RULE_NAMES.TYPESCRIPT, file: 'a.ts', line: 1, message: 'e', severity: 'error' as const },
           { rule: RULE_NAMES.TYPESCRIPT, file: 'b.ts', line: 2, message: 'e', severity: 'error' as const }
@@ -359,9 +364,13 @@ describe('QualityGate', () => {
 
     const result = await gate.run(['src/a.ts'])
 
-    expect(result.totalIssues).toBe(5)
+    expect(result.totalIssues).toBe(2)
     expect(result.remainingCount).toBe(2)
-    expect(result.fixedCount).toBe(3)
+    expect(result.fixedCount).toBe(0)
+    expect(result.fixed.eslint).toBe(0)
+    expect(result.attemptedCount).toBe(3)
+    expect(result.attempted?.eslint).toBe(3)
+    expect(result.attempted?.json).toBe(0)
   })
 
   it('returns ROLLBACK_FAILED when phase 2 only fails and rollback throws', async () => {

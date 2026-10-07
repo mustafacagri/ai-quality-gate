@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it, beforeEach, afterEach } from 'vitest'
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 
 import { TransactionManager } from '@/core/TransactionManager'
 import { DEFAULT_FIXER_CONFIG } from '@/types'
@@ -11,17 +11,13 @@ import { AutoFixer } from './AutoFixer'
 
 const makeTempDir = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'aqg-autofix-'))
 
+let tmp: string
+
+beforeEach(() => (tmp = makeTempDir()))
+
+afterEach(() => fs.rmSync(tmp, { force: true, recursive: true }))
+
 describe('AutoFixer', () => {
-  let tmp: string
-
-  beforeEach(() => {
-    tmp = makeTempDir()
-  })
-
-  afterEach(() => {
-    fs.rmSync(tmp, { force: true, recursive: true })
-  })
-
   it('runs curly-braces then single-line arrow fixers in order on the same file', async () => {
     const file = path.join(tmp, 'mixed.ts')
     const before = `export function f(x: boolean): number {
@@ -69,5 +65,76 @@ describe('AutoFixer', () => {
     await tx.rollback()
 
     expect(fs.readFileSync(file, 'utf8')).toBe(original)
+  })
+})
+
+describe('AutoFixer Vue script', () => {
+  it('fixes a Vue script in place and rolls the .vue file back', async () => {
+    const file = path.join(tmp, 'Widget.vue')
+    const original = `<template>
+  <p>keep</p>
+</template>
+<script setup lang="ts">
+export const run = (): number => {
+  return 4
+}
+</script>
+`
+    fs.writeFileSync(file, original, 'utf8')
+
+    const fixer = new AutoFixer(DEFAULT_FIXER_CONFIG)
+    const tx = new TransactionManager().begin()
+
+    await fixer.scanAndFix([file], tx)
+
+    expect(fs.readdirSync(tmp)).toEqual(['Widget.vue'])
+    expect(fs.readFileSync(file, 'utf8')).toContain('(): number => 4')
+
+    await tx.rollback()
+
+    expect(fs.readFileSync(file, 'utf8')).toBe(original)
+  })
+})
+
+describe('AutoFixer skipped files', () => {
+  it('reports a file no fixer could process, once per fixer, and then forgets it', async () => {
+    const missing = path.join(tmp, 'definitely-missing.ts')
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const fixer = new AutoFixer(DEFAULT_FIXER_CONFIG)
+
+    await fixer.scanAndFix([missing], new TransactionManager().begin())
+
+    const skipped = fixer.drainSkipped()
+
+    expect(skipped).toHaveLength(2)
+    expect(skipped[0]).toMatch(new RegExp(`^curlyBraces skipped ${missing}: `))
+    expect(skipped[1]).toMatch(new RegExp(`^singleLineArrow skipped ${missing}: `))
+    expect(fixer.drainSkipped()).toEqual([])
+
+    err.mockRestore()
+  })
+
+  it('reports a fixer that throws instead of returning', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const fixer = new AutoFixer(DEFAULT_FIXER_CONFIG)
+
+    Reflect.set(fixer, 'fixers', [{ name: 'curlyBraces', scanAndFix: () => Promise.reject(new Error('boom')) }])
+    await fixer.scanAndFix([path.join(tmp, 'a.ts')], new TransactionManager().begin())
+
+    expect(fixer.drainSkipped()).toEqual([`curlyBraces skipped ${path.join(tmp, 'a.ts')}: boom`])
+
+    err.mockRestore()
+  })
+
+  it('has nothing to report when every file was processed', async () => {
+    const file = path.join(tmp, 'ok.ts')
+
+    fs.writeFileSync(file, 'export const ok = 1\n', 'utf8')
+
+    const fixer = new AutoFixer(DEFAULT_FIXER_CONFIG)
+
+    await fixer.scanAndFix([file], new TransactionManager().begin())
+
+    expect(fixer.drainSkipped()).toEqual([])
   })
 })

@@ -6,10 +6,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { PACKAGE_JSON } from '@/constants/project-root'
 
 export function getPackageVersion(): string {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url))
-  const candidates = [path.join(moduleDir, '..', 'package.json'), path.join(moduleDir, '..', '..', 'package.json')]
+  const candidates = [path.join(moduleDir, '..', PACKAGE_JSON), path.join(moduleDir, '..', '..', PACKAGE_JSON)]
 
   for (const packageJsonPath of candidates) {
     try {

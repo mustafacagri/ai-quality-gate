@@ -5,6 +5,7 @@
 import { parseArgs } from 'node:util'
 
 import type { QualityGateRunOptions } from '@/types'
+import { errorMessage } from '@/utils/errorMessage'
 
 /** Long option names (single source for parseArgs and help text) */
 export const CLI_OPTION = {
@@ -181,7 +182,7 @@ export function parseCliArgs(argv: string[]): ParseCliResult {
   try {
     parsed = readCliParseArgs(args)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
 
     return { error: message, ok: false }
   }

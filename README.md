@@ -306,7 +306,7 @@ customRules:
     severity: warning
 ```
 
-Patterns use JavaScript `RegExp` source (escape backslashes as in YAML strings). Invalid patterns are skipped at runtime with a log line.
+Patterns use JavaScript `RegExp` source (escape backslashes as in YAML strings). An invalid pattern is skipped, and says so in `warnings`.
 
 ### JSON validator & i18n locale files
 
@@ -406,14 +406,26 @@ if (x) return true
   phase: "local" | "server" | "complete",
   success: boolean,
   message: string,
-  fixed: {
+  fixed: {                 // a FixSummary: edits on disk, kept even when findings remain
     eslint: number,          // ESLint auto-fixes
     curlyBraces: number,   // AST: single-statement if braces
     singleLineArrow: number, // AST: arrow body style
     prettier: number,      // Prettier formatting
-    json: number           // JSON validation passes counted
+    json: number           // JSON files validated (not an edit, so not part of fixedCount)
   },
-  remaining: Issue[],
+  fixedCount: number,      // Edits on disk: the sum of `fixed`, without `json`
+  attempted?: FixSummary,  // same fields as `fixed`: edits tried before a rollback, not on disk after a successful one
+  attemptedCount?: number, // The sum of `attempted`
+  warnings?: string[],     // Things the gate could not do that do not fail the run (a file a fixer skipped, a custom rule it could not apply)
+  remaining: Issue[],      // Findings left to fix by hand. Line numbers refer to the files as they are now (line 0 = location unknown)
+  remainingCount: number,  // remaining.length
+  totalIssues: number,     // fixedCount + remainingCount
+  error?: {                // Set when the run could not finish: e.g. ROLLBACK_FAILED, SONAR_API_ERROR, PERSISTENT_FAILURE
+    code: string,
+    message: string,
+    details?: object       // ROLLBACK_FAILED: { unrestoredFiles, restoredFiles }
+  },
+  checks?: object,         // Raw typecheck and lint results, in read-only check mode
   timing: {
     phase1: string,
     phase2?: string,
@@ -421,6 +433,22 @@ if (x) return true
   }
 }
 ```
+
+**What a failed run leaves on disk.** The gate applies every fix it can and keeps them. Findings it cannot fix
+(a lint rule, a custom rule, a `==` that is not provably safe to change) come back in `remaining` with
+`success: false`; the kept fixes are counted in `fixed`. The run is rolled back only when the fixers themselves broke
+something: a type error after the fix, a Vue file the compiler rejects, ESLint or Prettier failing to run. Then
+`fixed` is zero and the edits that were tried are listed in `attempted`. If that rollback itself fails, the response is `ROLLBACK_FAILED`: `error.details.unrestoredFiles` lists the files that may still hold the edits, `phase` is the phase that failed, and `remaining` is what failed, without locations. SonarQube (Phase 2) findings, or an
+unreachable server, do not undo the verified Phase 1 edits either: they stay and the findings come back in `remaining`.
+
+**Retrying.** If the same failure comes back unchanged three times in a row (same files with the same content, same
+findings), the MCP server answers with `error.code: "PERSISTENT_FAILURE"` and tells the caller to stop retrying and ask
+the human. Changing a file, or the findings changing, starts the count over. `fixedCount` counts edits only; JSON
+validation passes are in `fixed.json` and are not fixes.
+
+**Overlapping calls.** The MCP server runs `quality_fix` calls whose file sets overlap one after the other, in the order
+they arrived, so one call's rollback can never restore an older copy over another call's kept edits. Calls on different
+files still run side by side.
 
 ---
 
@@ -556,15 +584,32 @@ MIT © [Mustafa Çağrı Güven](https://github.com/mustafacagri)
 
 Run `ai-quality-gate --check --phase1-only <selected-file ...>` for readonly local
 verification. ESLint checks only the explicitly selected real `.js`, `.jsx`,
-`.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, and `.cts` paths, including executable JS
-configuration and TS declarations. It never expands lint scope through imports or
-creates virtual JS from Vue. Deleted and old rename endpoints must first be
+`.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, `.cts`, and `.vue` paths, including executable JS
+configuration and TS declarations. It never expands lint scope through imports.
+A `.vue` file is linted in place: `vue-eslint-parser` applies script rules to
+`<script>` and `<script setup>` only. Template and style are not JavaScript, and
+no extracted script file is written. `@vue/compiler-sfc` `parse()` and
+`compileScript()` failures are diagnostics. A structurally invalid SFC fails
+before ESLint, so a missing end tag is not reported as an unused binding.
+AST edits keep arrow signatures and terminate a brace-less `if` with a semicolon.
+Prettier, when enabled, formats the whole SFC. Deleted and old rename endpoints must first be
 materialized as real files in an isolated snapshot by the caller, with their base
 content and endpoint identity retained.
 
 TypeScript checks the full nearest `tsconfig.json` project context with `--noEmit`;
 this can include imports and other project files and does not expand ESLint's
-selected scope. TypeScript incremental metadata is redirected to a temporary
+selected scope. A `.vue` file with a TypeScript script (`lang="ts"` or `tsx`) is checked with
+`vue-tsc`, which also checks its template expressions. A project that compiles `.vue` files uses `vue-tsc` for
+its `.ts` files too, so they can import `.vue` modules; a project counts as one that compiles `.vue` files when its
+`include` matches any, or when the nearest `package.json` depends on `vue`. The project is the tsconfig that includes the
+file: for a create-vue style root config that only lists `references`, that is the referenced project, and a file such as
+a shared helper that no project lists but a referenced project imports is checked in that project. A `.vue` file that no
+tsconfig includes fails instead of passing unchecked. A plain-JavaScript `.vue` file is not type checked, as a `.js`
+file is not. This holds for `.ts` files too: a file that no tsconfig includes, directly or through imports, fails with
+"Not included by <tsconfig>" instead of passing unchecked. Type errors anywhere in the program fail the check and are all
+reported (those in the selected files first, at most 50). A plain-JavaScript `<script>` is linted with the rules a `.js` file gets, and a `lang="ts"` one with
+the TypeScript rules. Type-aware ESLint rules (such as `no-floating-promises`) are not applied to `.vue` files: that is a
+deliberate choice, not a limit of the parser. TypeScript incremental metadata is redirected to a temporary
 folder outside the project and removed after the check. No source, configuration,
 lockfile, or control file is rewritten by check mode. The MCP `quality_fix` tool
 continues to be a mutating operation; use the CLI check interface for readonly work.

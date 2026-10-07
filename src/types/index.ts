@@ -17,10 +17,10 @@ export type { Config, CustomRule, FixerConfig } from './config'
 export { DEFAULT_FIXER_CONFIG } from './config'
 
 // Verification types
-export type { LocalResult, ServerResult, TypeCheckResult, LintResult } from './verification'
+export type { LocalResult, ServerResult, TypeCheckResult, LintResult, PrettierFormatResult } from './verification'
 
 // Fixer types
-export type { Transaction, Fixer } from './fixer'
+export type { Transaction, Fixer, ScriptUnit, ScriptEditSession } from './fixer'
 
 // SonarQube types
 export type { SonarQubeIssue, SonarQubeTaskStatus } from './sonarqube'
@@ -33,3 +33,6 @@ export type { Phase1Mode, QualityGatePhases, Phase1RunOptions, QualityGateRunOpt
 
 // ESLint types (internal)
 export type { ESLintResult, ESLintMessage } from './eslint'
+
+// Vue SFC script blocks
+export type { VueScriptBlock, SourceRangeReplacement } from './vue'

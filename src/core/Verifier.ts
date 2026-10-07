@@ -3,57 +3,28 @@
  * Runs TypeScript typecheck and ESLint
  */
 
-import { spawn } from 'node:child_process'
 import path from 'node:path'
-import os from 'node:os'
-import { createRequire } from 'node:module'
 import * as fs from 'node:fs'
-import type { Config, TypeCheckResult, LintResult, Issue } from '@/types'
+import type { Config, TypeCheckResult, LintResult, Issue, PrettierFormatResult } from '@/types'
 import { ESLintResultsSchema, type ESLintResult } from '@/types/eslint'
-import { isLintableFile, isTypeScriptFile } from '@/constants/extensions'
-import {
-  CHECK_STATUS,
-  VERIFIER_TOOL_MODULE,
-  STRICT_LINT_ARGUMENTS,
-  TYPECHECK_CACHE_PREFIX,
-  TYPECHECK_CACHE_FILENAME
-} from '@/constants/verification'
+import { isLintableFile, isPrettierFormattableFile } from '@/constants/extensions'
+import { CHECK_STATUS, VERIFIER_TOOL_MODULE, STRICT_LINT_ARGUMENTS } from '@/constants/verification'
+import { PACKAGE_JSON } from '@/constants/project-root'
 import { EXIT_CODE } from '@/constants/exit-codes'
-import { SEVERITY, DEPRECATED_PATTERN, TYPESCRIPT_ERROR_PATTERN, RULE_NAMES } from '@/constants'
-import { groupFilesByTsConfig, isFileRelevantToPaths, resolveEmbeddedEslintConfigPath } from '@/utils'
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Security: Node Tool Entrypoints
-// No shell interpolation of selected source paths
-// ═══════════════════════════════════════════════════════════════════════════
-
-interface CommandResult {
-  exitCode: number | null
-  signal: NodeJS.Signals | null
-  stdout: string
-  stderr: string
-  error?: string
-}
-
-const packageRequire = createRequire(import.meta.url)
-
-/** Execute JS tool entrypoints with Node directly, including on Windows; never interpolate file paths in a shell. */
-const findToolCommand = (
-  projectDir: string,
-  tool: (typeof VERIFIER_TOOL_MODULE)[keyof typeof VERIFIER_TOOL_MODULE]
-): { command: string; args: string[] } => {
-  const projectRequire = createRequire(path.join(projectDir, 'package.json'))
-  let packagePath: string
-
-  try {
-    packagePath =
-      tool === VERIFIER_TOOL_MODULE.ESLINT ? packageRequire.resolve(tool.package) : projectRequire.resolve(tool.package)
-  } catch {
-    packagePath = packageRequire.resolve(tool.package)
-  }
-
-  return { command: process.execPath, args: [path.join(path.dirname(packagePath), tool.binary)] }
-}
+import { SEVERITY, RULE_NAMES, UNKNOWN_ISSUE_LINE } from '@/constants'
+import { resolveEmbeddedEslintConfigPath } from '@/utils'
+import {
+  assertCommandCompleted,
+  commandFailureMessage,
+  commandSucceeded,
+  type CommandResult
+} from '@/core/commandResult'
+import { groupLintFilesByScriptLanguage, mergeLintResults, type LintGroup } from '@/core/lintGroups'
+import { countChangedFiles, prettierFailureFile } from '@/core/prettierOutcome'
+import { runProcess } from '@/core/runProcess'
+import { findToolCommand } from '@/core/toolCommand'
+import { toolIssue } from '@/core/toolIssue'
+import { TypeChecker } from '@/core/TypeChecker'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Verifier Class
@@ -75,126 +46,11 @@ export class Verifier {
   }
 
   /**
-   * Report files without tsconfig as errors
+   * Typecheck has full tsconfig context; lint remains limited to the selected paths.
+   * See {@link TypeChecker}.
    */
-  private reportMissingTsConfig(groupFiles: string[]): Issue[] {
-    return groupFiles.map(file => ({
-      rule: RULE_NAMES.TYPESCRIPT,
-      file,
-      line: 0,
-      message: 'No tsconfig.json found for this file',
-      severity: SEVERITY.ERROR
-    }))
-  }
-
-  /**
-   * Run TypeScript typecheck for a single tsconfig group
-   */
-  private async runTypeCheckForGroup(tsConfigPath: string, groupFiles: string[]): Promise<TypeCheckResult> {
-    const projectDir = path.dirname(tsConfigPath)
-    let cacheDir: string | undefined
-
-    try {
-      cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), TYPECHECK_CACHE_PREFIX))
-      const tscCmd = findToolCommand(projectDir, VERIFIER_TOOL_MODULE.TYPESCRIPT)
-      const result = await this.execCommand(
-        tscCmd.command,
-        [
-          ...tscCmd.args,
-          '--noEmit',
-          '--incremental',
-          '--tsBuildInfoFile',
-          path.join(cacheDir, TYPECHECK_CACHE_FILENAME),
-          '--pretty',
-          'false',
-          '--project',
-          tsConfigPath
-        ],
-        { cwd: projectDir, timeout: this.config.phase1Timeout }
-      )
-
-      return this.parseTypeCheckCommand(result, groupFiles)
-    } catch (error) {
-      return {
-        passed: false,
-        status: CHECK_STATUS.ERROR,
-        errors: [this.toolIssue(RULE_NAMES.TYPESCRIPT, tsConfigPath, error)]
-      }
-    } finally {
-      if (cacheDir !== undefined) fs.rmSync(cacheDir, { recursive: true, force: true })
-    }
-  }
-
-  private parseTypeCheckCommand(result: CommandResult, groupFiles: string[]): TypeCheckResult {
-    const output = `${result.stdout}\n${result.stderr}`
-    const errors = this.parseTypeCheckErrors(output, groupFiles)
-    this.assertCommandCompleted(result)
-
-    if (output.trim().length > 0 && errors.length === 0) {
-      throw new Error(`Unaccounted TypeScript output: ${output.trim()}`)
-    }
-
-    const failed =
-      result.exitCode !== EXIT_CODE.SUCCESS || TYPESCRIPT_ERROR_PATTERN.test(output) || DEPRECATED_PATTERN.test(output)
-
-    if (failed && errors.length === 0) {
-      throw new Error(`TypeScript failed without accounted diagnostics: ${output.trim()}`)
-    }
-
-    return {
-      passed: !failed && errors.length === 0,
-      status: failed || errors.length > 0 ? CHECK_STATUS.FAIL : CHECK_STATUS.PASS,
-      errors
-    }
-  }
-
-  private assertCommandCompleted(result: CommandResult): void {
-    if (result.error !== undefined || result.signal !== null || result.exitCode === null) {
-      throw new Error(
-        result.error ?? `exit ${String(result.exitCode)}, signal ${String(result.signal)}: ${result.stderr}`
-      )
-    }
-  }
-
-  /** Typecheck has full tsconfig context; lint remains limited to the selected paths. */
-  async runTypeCheck(files: string[]): Promise<TypeCheckResult> {
-    const tsFiles = files.filter(isTypeScriptFile).map(file => path.resolve(this.config.projectRoot, file))
-    const missing = tsFiles.filter(file => !fs.existsSync(file) || !fs.statSync(file).isFile())
-
-    if (missing.length > 0) {
-      return {
-        passed: false,
-        status: CHECK_STATUS.ERROR,
-        errors: missing.map(file =>
-          this.toolIssue(RULE_NAMES.TYPESCRIPT, file, new Error('Selected TypeScript source is missing'))
-        )
-      }
-    }
-
-    const groups = groupFilesByTsConfig(tsFiles, this.config.projectRoot)
-    const allErrors: Issue[] = []
-    let status: TypeCheckResult['status'] = CHECK_STATUS.PASS
-
-    for (const [tsConfigPath, groupFiles] of groups) {
-      if (tsConfigPath === '__no_tsconfig__') {
-        allErrors.push(...this.reportMissingTsConfig(groupFiles))
-        status = CHECK_STATUS.ERROR
-        continue
-      }
-
-      const result = await this.runTypeCheckForGroup(tsConfigPath, groupFiles)
-      allErrors.push(...result.errors)
-
-      if (
-        result.status === CHECK_STATUS.ERROR ||
-        (status !== CHECK_STATUS.ERROR && result.status === CHECK_STATUS.FAIL)
-      ) {
-        const { status: resultStatus } = result
-        status = resultStatus
-      }
-    }
-
-    return { passed: status === CHECK_STATUS.PASS, status, errors: allErrors, checkedProjects: [...groups.keys()] }
+  runTypeCheck(files: string[]): Promise<TypeCheckResult> {
+    return new TypeChecker(this.config, (command, args, options) => this.execCommand(command, args, options)).run(files)
   }
 
   /**
@@ -216,32 +72,76 @@ export class Verifier {
    * This ensures consistent formatting (e.g., single-line if statements)
    * Runs Prettier from each file's app directory to pick up correct config
    */
-  async runPrettier(files: string[]): Promise<{ success: boolean; formattedCount: number }> {
-    const formattableFiles = files.filter(f => /\.(?:ts|tsx|js|jsx|vue|json)$/.test(f))
+  async runPrettier(files: string[]): Promise<PrettierFormatResult> {
+    const formattableFiles = [
+      ...new Set(
+        files.filter(file => isPrettierFormattableFile(file)).map(file => path.resolve(this.config.projectRoot, file))
+      )
+    ]
 
-    if (formattableFiles.length === 0) return { success: true, formattedCount: 0 }
+    if (formattableFiles.length === 0) return { success: true, formattedCount: 0, issues: [] }
 
-    // Group files by their app directory to run Prettier with correct config
     const filesByAppDir = this.groupFilesByAppDir(formattableFiles)
     let totalFormatted = 0
+    const issues: Issue[] = []
 
     for (const [appDir, appFiles] of Object.entries(filesByAppDir)) {
-      const prettierCmd = findToolCommand(appDir, VERIFIER_TOOL_MODULE.PRETTIER)
-      const args = [...prettierCmd.args, '--write', ...appFiles]
+      const formatted = await this.formatWithPrettier(appDir, appFiles)
 
-      try {
-        await this.execCommand(prettierCmd.command, args, {
-          cwd: appDir,
-          timeout: this.config.phase1Timeout
-        })
+      totalFormatted += formatted.formattedCount
+      issues.push(...formatted.issues)
+    }
 
-        totalFormatted += appFiles.length
-      } catch {
-        // Prettier failure is not critical - continue with other files
+    return { success: issues.length === 0, formattedCount: totalFormatted, issues }
+  }
+
+  /** A group that cannot be formatted reports an issue instead of throwing, so earlier groups keep their count. */
+  private async formatWithPrettier(appDir: string, appFiles: string[]): Promise<PrettierFormatResult> {
+    try {
+      return await this.rewriteWithPrettier(appDir, appFiles)
+    } catch (error) {
+      return {
+        success: false,
+        formattedCount: 0,
+        issues: [toolIssue(RULE_NAMES.PRETTIER, appFiles[0] ?? appDir, error)]
+      }
+    }
+  }
+
+  private async rewriteWithPrettier(appDir: string, appFiles: string[]): Promise<PrettierFormatResult> {
+    const before = new Map<string, string>()
+
+    for (const file of appFiles) before.set(path.resolve(file), fs.readFileSync(file, 'utf8'))
+
+    const prettierCmd = findToolCommand(appDir, VERIFIER_TOOL_MODULE.PRETTIER)
+    const args = [...prettierCmd.args, '--write', ...appFiles]
+    const result = await this.execCommand(prettierCmd.command, args, {
+      cwd: appDir,
+      timeout: this.config.phase1Timeout
+    })
+
+    // `prettier --write` rewrites the files it can format even when another file makes it exit non-zero.
+    const formattedCount = countChangedFiles(appFiles, before)
+
+    if (!commandSucceeded(result)) {
+      const representative = prettierFailureFile(result, appDir, appFiles) ?? appDir
+
+      return {
+        success: false,
+        formattedCount,
+        issues: [
+          {
+            rule: RULE_NAMES.PRETTIER,
+            file: representative,
+            line: UNKNOWN_ISSUE_LINE,
+            message: commandFailureMessage(result, 'Prettier'),
+            severity: SEVERITY.ERROR
+          }
+        ]
       }
     }
 
-    return { success: totalFormatted > 0, formattedCount: totalFormatted }
+    return { success: true, formattedCount, issues: [] }
   }
 
   /**
@@ -268,7 +168,7 @@ export class Verifier {
     let dir = path.dirname(filePath)
 
     while (dir !== path.dirname(dir)) {
-      if (fs.existsSync(path.join(dir, 'package.json'))) return dir
+      if (fs.existsSync(path.join(dir, PACKAGE_JSON))) return dir
 
       dir = path.dirname(dir)
     }
@@ -296,7 +196,22 @@ export class Verifier {
       for (const file of lintableFiles) {
         if (!fs.statSync(file).isFile()) throw new Error(`Selected source is not a file: ${file}`)
       }
+    } catch (error) {
+      return this.createParseErrorResult(error)
+    }
 
+    const results: LintResult[] = []
+
+    // Every group runs, so the edits an earlier `--fix` pass made are counted even if a later group fails.
+    for (const group of groupLintFilesByScriptLanguage(lintableFiles)) {
+      results.push(await this.runLintGroup(group, autoFix))
+    }
+
+    return mergeLintResults(results)
+  }
+
+  private async runLintGroup(group: LintGroup, autoFix: boolean): Promise<LintResult> {
+    try {
       const eslintCmd = findToolCommand(this.config.projectRoot, VERIFIER_TOOL_MODULE.ESLINT)
       const args = [
         ...eslintCmd.args,
@@ -304,21 +219,22 @@ export class Verifier {
         ...(autoFix ? ['--fix'] : []),
         ...STRICT_LINT_ARGUMENTS,
         '--',
-        ...lintableFiles
+        ...group.files
       ]
       const result = await this.execCommand(eslintCmd.command, args, {
         cwd: this.config.projectRoot,
-        timeout: this.config.phase1Timeout
+        timeout: this.config.phase1Timeout,
+        env: group.env
       })
 
-      return this.parseLintCommand(result, lintableFiles)
+      return this.parseLintCommand(result, group.files)
     } catch (error) {
       return this.createParseErrorResult(error)
     }
   }
 
   private parseLintCommand(result: CommandResult, lintableFiles: string[]): LintResult {
-    this.assertCommandCompleted(result)
+    assertCommandCompleted(result)
 
     if (result.exitCode !== EXIT_CODE.SUCCESS && result.exitCode !== EXIT_CODE.QUALITY_FAILED) {
       throw new Error(`ESLint exit ${String(result.exitCode)}: ${result.stderr}`)
@@ -336,83 +252,28 @@ export class Verifier {
   private execCommand(
     command: string,
     args: string[],
-    options: { cwd: string; timeout: number }
+    options: { cwd: string; timeout: number; env?: Record<string, string> }
   ): Promise<CommandResult> {
     if (command !== process.execPath) throw new Error('Verifier can only run Node tool entrypoints')
 
-    return new Promise(resolve => {
-      const proc = spawn(command, args, { cwd: options.cwd, shell: false, timeout: options.timeout })
-      let stdout = ''
-      let stderr = ''
-      proc.stdout.on('data', (data: Buffer) => (stdout += data.toString()))
-      proc.stderr.on('data', (data: Buffer) => (stderr += data.toString()))
-      proc.on('close', (exitCode, signal) => resolve({ exitCode, signal, stdout, stderr }))
-      proc.on('error', error => resolve({ exitCode: null, signal: null, stdout, stderr, error: error.message }))
-    })
-  }
-
-  private toolIssue(rule: string, file: string, error: unknown): Issue {
-    const detail = error instanceof Error ? error.message : String(error)
-
-    return { rule, file, line: 0, message: `Check execution error: ${detail}`, severity: SEVERITY.ERROR }
-  }
-
-  /**
-   * Parse a single TypeScript error line into an Issue
-   */
-  private parseErrorLine(line: string, relevantFiles: string[]): Issue | null {
-    const trimmedLine = line.trim()
-    // TypeScript error format: file(line,col): error TS####: message
-    // Also captures deprecated warnings: file(line,col): error TS####: ... is deprecated
-    // ReDoS-safe: Use non-greedy [^(]+ instead of .+, fixed spaces instead of \s*
-    const errorRegex = /^([^(]+)\((\d+),(\d+)\): error TS\d+: (.+)$/
-    const match = errorRegex.exec(trimmedLine)
-
-    if (!match) return null
-
-    const [, file, lineNum, col, message] = match
-
-    if (!file || !lineNum || !message) return null
-
-    const normalizedFile = path.normalize(file)
-
-    if (!isFileRelevantToPaths(normalizedFile, relevantFiles)) return null
-
-    const trimmedMessage = message.trim()
-    const isDeprecated = DEPRECATED_PATTERN.test(trimmedMessage)
-
-    return {
-      rule: isDeprecated ? RULE_NAMES.TYPESCRIPT_DEPRECATED : RULE_NAMES.TYPESCRIPT,
-      file: normalizedFile,
-      line: Number.parseInt(lineNum, 10),
-      column: col ? Number.parseInt(col, 10) : undefined,
-      message: trimmedMessage,
-      severity: isDeprecated ? SEVERITY.WARNING : SEVERITY.ERROR
-    }
-  }
-
-  private parseTypeCheckErrors(output: string, relevantFiles: string[]): Issue[] {
-    const errors: Issue[] = []
-    // Handle both Unix (\n) and Windows (\r\n) line endings
-    const lines = output.split(/\r?\n/)
-
-    for (const line of lines) {
-      const issue = this.parseErrorLine(line, relevantFiles)
-
-      if (issue) errors.push(issue)
-    }
-
-    return errors
+    return runProcess(command, args, options)
   }
 
   private parseLintResult(jsonOutput: string, relevantFiles: string[]): LintResult {
+    let results: ESLintResult[]
+
     try {
       const raw: unknown = JSON.parse(jsonOutput)
-      const results = ESLintResultsSchema.parse(raw)
-
-      return this.processLintResults(results, relevantFiles)
+      results = ESLintResultsSchema.parse(raw)
     } catch (parseError) {
       return this.createParseErrorResult(parseError)
+    }
+
+    try {
+      return this.processLintResults(results, relevantFiles)
+    } catch (processError) {
+      // `eslint --fix` has already written the files it could fix, whatever happened to the others.
+      return this.createParseErrorResult(processError, results.filter(result => result.output !== undefined).length)
     }
   }
 
@@ -463,14 +324,14 @@ export class Verifier {
       }))
   }
 
-  private createParseErrorResult(error: unknown): LintResult {
+  private createParseErrorResult(error: unknown, fixedCount = 0): LintResult {
     return {
       passed: false,
       status: CHECK_STATUS.ERROR,
       scannedFiles: [],
       hasErrors: true,
-      fixedCount: 0,
-      errors: [this.toolIssue(RULE_NAMES.ESLINT, this.config.projectRoot, error)]
+      fixedCount,
+      errors: [toolIssue(RULE_NAMES.ESLINT, this.config.projectRoot, error)]
     }
   }
 }

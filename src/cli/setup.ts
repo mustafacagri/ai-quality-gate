@@ -8,6 +8,7 @@ import { EXIT_CODE } from '@/constants'
 
 import { buildQualityGateYamlFromModel } from './setupModel'
 import { promptSetupWizardModel } from './setupPrompts'
+import { errorMessage } from '@/utils/errorMessage'
 
 export { buildQualityGateYamlFromModel, type SetupWizardModel } from './setupModel'
 
@@ -28,7 +29,7 @@ export async function runSetup(): Promise<number> {
 
     return EXIT_CODE.SUCCESS
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
 
     console.error(`Setup failed: ${message}`)
 

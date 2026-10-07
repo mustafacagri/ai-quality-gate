@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { TransactionManager } from '@/core/TransactionManager'
+import { RollbackError, TransactionManager } from '@/core/TransactionManager'
 import { transactionFileSync } from '@/core/transactionFileSync'
 
 const makeTempDir = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'aqg-tx-'))
@@ -156,6 +156,48 @@ describe('TransactionManager', () => {
     spy.mockRestore()
   })
 
+  it('names the files it could not restore and the ones it did', async () => {
+    const dir = makeTempDir()
+    const stuck = path.join(dir, 'stuck.txt')
+    const fine = path.join(dir, 'fine.txt')
+
+    fs.writeFileSync(stuck, 'keep', 'utf8')
+    fs.writeFileSync(fine, 'keep', 'utf8')
+
+    const tx = new TransactionManager().begin()
+
+    tx.recordChange(stuck)
+    tx.recordChange(fine)
+    fs.writeFileSync(stuck, 'mutated', 'utf8')
+    fs.writeFileSync(fine, 'mutated', 'utf8')
+
+    const writeImpl = transactionFileSync.writeFileSync.bind(transactionFileSync)
+    const spy = vi
+      .spyOn(transactionFileSync, 'writeFileSync')
+      .mockImplementation((...args: Parameters<typeof transactionFileSync.writeFileSync>) => {
+        const pathLike = args[0]
+
+        if (typeof pathLike === 'string' && path.resolve(pathLike) === path.resolve(stuck)) {
+          throw new Error('simulated write failure')
+        }
+
+        writeImpl(...args)
+      })
+
+    const error: unknown = await tx.rollback().then(
+      () => undefined,
+      (error_: unknown) => error_
+    )
+
+    spy.mockRestore()
+
+    expect(error).toBeInstanceOf(RollbackError)
+    expect((error as RollbackError).failures).toEqual([{ file: stuck, message: 'simulated write failure' }])
+    expect((error as RollbackError).restored).toEqual([fine])
+    expect(fs.readFileSync(fine, 'utf8')).toBe('keep')
+    expect(fs.readFileSync(stuck, 'utf8')).toBe('mutated')
+  })
+
   it('rejects rollback when unlink throws for a created file', async () => {
     const dir = makeTempDir()
     const file = path.join(dir, 'rollback-unlink-fail.txt')
@@ -233,5 +275,37 @@ describe('TransactionManager', () => {
     await tx2.rollback()
 
     expect(fs.readFileSync(file, 'utf8')).toBe('1')
+  })
+
+  it('rollback restores an existing empty file instead of deleting it', async () => {
+    const dir = makeTempDir()
+    const file = path.join(dir, 'empty.txt')
+
+    fs.writeFileSync(file, '', 'utf8')
+
+    const tx = new TransactionManager().begin()
+
+    tx.recordChange(file)
+    fs.writeFileSync(file, 'changed', 'utf8')
+    await tx.rollback()
+
+    expect(fs.existsSync(file)).toBe(true)
+    expect(fs.readFileSync(file, 'utf8')).toBe('')
+  })
+
+  it('rethrows snapshot read errors that are not a missing file', () => {
+    const dir = makeTempDir()
+    const file = path.join(dir, 'denied.txt')
+
+    fs.writeFileSync(file, 'x', 'utf8')
+
+    const tx = new TransactionManager().begin()
+    const spy = vi.spyOn(transactionFileSync, 'readFileSync').mockImplementation(() => {
+      throw Object.assign(new Error('denied'), { code: 'EACCES' })
+    })
+
+    expect(() => tx.recordChange(file)).toThrow(/denied/)
+
+    spy.mockRestore()
   })
 })

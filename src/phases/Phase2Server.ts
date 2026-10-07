@@ -4,13 +4,15 @@
  * Only runs if Phase 1 passes AND config exists
  */
 
-import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import axios from 'axios'
 import type { Config, ServerResult, Issue, SonarQubeIssue, Severity, ErrorCode } from '@/types'
 import { isFileRelevantToPaths } from '@/utils/pathMatch'
 import { SEVERITY, SONAR_SEVERITY, SONAR_TASK_STATUS } from '@/constants'
+import { ERROR_CODE } from '@/constants/errors'
+import { runProcess } from '@/core/runProcess'
+import { errorMessage } from '@/utils/errorMessage'
 
 /** HTTP 4xx/5xx responses from SonarQube REST API */
 const MIN_HTTP_STATUS_CLIENT_ERROR = 400
@@ -22,13 +24,15 @@ const tryClassifyAxiosSonarError = (error: unknown): ErrorCode | undefined => {
 
   const ax = error as { code?: string; response?: { status?: number } }
 
-  if (ax.code === 'ECONNABORTED') return 'SONAR_TIMEOUT'
+  if (ax.code === 'ECONNABORTED') return ERROR_CODE.SONAR_TIMEOUT
 
-  if (ax.code === 'ECONNREFUSED' || ax.code === 'ENOTFOUND' || ax.code === 'ETIMEDOUT') return 'SONAR_CONNECTION_FAILED'
+  if (ax.code === 'ECONNREFUSED' || ax.code === 'ENOTFOUND' || ax.code === 'ETIMEDOUT') {
+    return ERROR_CODE.SONAR_CONNECTION_FAILED
+  }
 
   const status = ax.response?.status
 
-  if (status !== undefined && status >= MIN_HTTP_STATUS_CLIENT_ERROR) return 'SONAR_API_ERROR'
+  if (status !== undefined && status >= MIN_HTTP_STATUS_CLIENT_ERROR) return ERROR_CODE.SONAR_API_ERROR
 
   return undefined
 }
@@ -41,14 +45,14 @@ const classifySonarFailure = (error: unknown): ErrorCode => {
   if (error instanceof Error) {
     const msg = error.message
 
-    if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNABORTED/i.test(msg)) return 'SONAR_CONNECTION_FAILED'
+    if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNABORTED/i.test(msg)) return ERROR_CODE.SONAR_CONNECTION_FAILED
 
-    if (/SonarQube analysis timeout/i.test(msg)) return 'SONAR_TIMEOUT'
+    if (/SonarQube analysis timeout/i.test(msg)) return ERROR_CODE.SONAR_TIMEOUT
 
-    if (/exited with code/i.test(msg)) return 'SONAR_API_ERROR'
+    if (/exited with code/i.test(msg)) return ERROR_CODE.SONAR_API_ERROR
   }
 
-  return 'SONAR_API_ERROR'
+  return ERROR_CODE.SONAR_API_ERROR
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -105,7 +109,7 @@ export class Phase2Server {
         issues
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       const code = classifySonarFailure(error)
       console.error('[Phase2] Error:', message)
 
@@ -135,7 +139,7 @@ export class Phase2Server {
   /**
    * Run sonar-scanner CLI
    */
-  private runScanner(): Promise<void> {
+  private async runScanner(): Promise<void> {
     const scannerPath = this.config.sonarScannerPath ?? 'sonar-scanner'
 
     // Security: Validate scanner command against whitelist
@@ -156,30 +160,22 @@ export class Phase2Server {
       `-Dsonar.scm.disabled=true`
     ]
 
-    return new Promise((resolve, reject) => {
-      // Security note: shell: true is required for cross-platform compatibility
-      // Scanner path is validated against ALLOWED_SCANNERS whitelist
-      // Args are constructed from validated config (not from user input)
-      const proc = spawn(scannerPath, args, {
-        cwd: this.config.projectRoot,
-        shell: true,
-        timeout: this.config.phase2Timeout
-      })
-
-      let stdout = ''
-      let stderr = ''
-
-      proc.stdout.on('data', (data: Buffer) => (stdout += data.toString()))
-
-      proc.stderr.on('data', (data: Buffer) => (stderr += data.toString()))
-
-      proc.on('close', code => {
-        if (code === 0) resolve()
-        else reject(new Error(`sonar-scanner exited with code ${String(code ?? 'unknown')}: ${stderr || stdout}`))
-      })
-
-      proc.on('error', error => reject(error))
+    // Security note: shell: true is required for cross-platform compatibility
+    // Scanner path is validated against ALLOWED_SCANNERS whitelist
+    // Args are constructed from validated config (not from user input)
+    const result = await runProcess(scannerPath, args, {
+      cwd: this.config.projectRoot,
+      shell: true,
+      timeout: this.config.phase2Timeout
     })
+
+    if (result.error !== undefined) throw new Error(result.error)
+
+    if (result.exitCode !== 0) {
+      const output = result.stderr || result.stdout
+
+      throw new Error(`sonar-scanner exited with code ${String(result.exitCode ?? 'unknown')}: ${output}`)
+    }
   }
 
   /**
@@ -346,7 +342,7 @@ export class Phase2Server {
     } catch (error) {
       console.error('[Phase2] Failed to fetch issues:', error)
 
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
 
       throw new Error(`SonarQube issues API failed: ${message}`)
     }

@@ -74,7 +74,7 @@
     "template-indent": "warn"
   },
   "eslintStrict": {
-    "_comment_v2_1_core_fixable": "v2.1.0: no-var, eqeqeq, prefer-const — enforced here; fixes via ESLint --fix only (no duplicate AST fixers).",
+    "_comment_v2_1_core_fixable": "v2.1.0: no-var, eqeqeq, prefer-const — enforced here. ESLint --fix rewrites no-var and prefer-const (no duplicate AST fixers). eqeqeq is rewritten only where ESLint proves it safe (for example typeof comparisons); any other == only gets a suggestion, because == to === can change behavior, so it stays reported.",
     "_comment_import_alias": "Import alias restriction: aqg/no-import-alias AST rule prevents 'import { foo as bar }' pattern. Use original function names or rename local functions instead.",
     "max-lines": ["warn", { "max": 400, "skipBlankLines": true, "skipComments": true }],
     "max-lines-per-function": ["warn", { "max": 50, "skipBlankLines": true, "skipComments": true }],

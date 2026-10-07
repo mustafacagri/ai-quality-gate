@@ -14,12 +14,22 @@
  * - Combined line must be < MAX_LINE_LENGTH characters
  * - No else clause
  * - No comments inside body
+ * - The statement keeps a trailing semicolon so a following `[` or `(` cannot continue it
  */
 
-import { SyntaxKind, type SourceFile, type IfStatement, type Block } from 'ts-morph'
-import type { Fix, Transaction, TransformResult } from '@/types'
+import {
+  Node,
+  SyntaxKind,
+  VariableDeclarationKind,
+  type SourceFile,
+  type IfStatement,
+  type Block,
+  type Statement
+} from 'ts-morph'
+import type { Fix, ScriptUnit, Transaction, TransformResult } from '@/types'
 import { FIXER_TYPE } from '@/constants'
 import { BaseFixer } from '@/fixers/BaseFixer'
+import { errorMessage } from '@/utils/errorMessage'
 
 const MAX_LINE_LENGTH = 120
 
@@ -30,37 +40,35 @@ export class CurlyBracesFixer extends BaseFixer {
    * Scan file for if statements with unnecessary braces
    */
   async scanAndFix(filePath: string, transaction: Transaction): Promise<Fix[]> {
-    const fixes: Fix[] = []
-
     try {
-      const sourceFile = this.getSourceFile(filePath)
-      const ifStatements = this.findIfStatements(sourceFile)
-      // Sort in reverse order (end to start) so replacements don't affect positions
-      const sortedStatements = [...ifStatements].sort((a, b) => b.getStart() - a.getStart())
-
-      for (const ifStmt of sortedStatements) {
-        if (!this.isSafeToTransform(ifStmt)) continue
-
-        const lineNumber = ifStmt.getStartLineNumber()
-        transaction.recordChange(filePath)
-
-        const result = this.transform(ifStmt)
-
-        if (result.success) {
-          fixes.push({
-            file: filePath,
-            line: lineNumber,
-            type: FIXER_TYPE.CURLY_BRACES,
-            description: 'Removed unnecessary curly braces from single-statement if'
-          })
-        }
-      }
-
-      if (fixes.length > 0) await sourceFile.save()
-
-      this.cleanupSourceFile(sourceFile)
+      return await this.editScripts(filePath, unit => this.fixIfStatements(unit, filePath, transaction))
     } catch (error) {
-      console.error(`CurlyBracesFixer error in ${filePath}:`, error)
+      return this.skip(filePath, error)
+    }
+  }
+
+  private fixIfStatements(unit: ScriptUnit, filePath: string, transaction: Transaction): Fix[] {
+    const fixes: Fix[] = []
+    const sortedStatements = [...this.findIfStatements(unit.sourceFile)].sort(
+      (left, right) => right.getStart() - left.getStart()
+    )
+
+    for (const ifStmt of sortedStatements) {
+      if (!this.isSafeToTransform(ifStmt)) continue
+
+      const lineNumber = unit.toFileLine(ifStmt.getStartLineNumber())
+      transaction.recordChange(filePath)
+
+      const result = this.transform(ifStmt)
+
+      if (result.success) {
+        fixes.push({
+          file: filePath,
+          line: lineNumber,
+          type: FIXER_TYPE.CURLY_BRACES,
+          description: 'Removed unnecessary curly braces from single-statement if'
+        })
+      }
     }
 
     return fixes
@@ -92,16 +100,14 @@ export class CurlyBracesFixer extends BaseFixer {
 
     if (!singleStatement) return false
 
-    // Statement must not be another if (nested if)
-    if (singleStatement.getKind() === SyntaxKind.IfStatement) return false
+    if (this.needsEnclosingBlock(singleStatement)) return false
 
     // Must not have comments inside block
     const blockText = block.getText()
 
     if (blockText.includes('//') || blockText.includes('/*')) return false
 
-    // Get statement text for analysis
-    const statementText = singleStatement.getText().replace(/;$/, '')
+    const statementText = this.statementWithoutTerminator(singleStatement)
 
     // 🎯 Skip if statement returns an object literal
     // Prettier wraps object literals based on various heuristics (not just printWidth)
@@ -110,7 +116,7 @@ export class CurlyBracesFixer extends BaseFixer {
 
     // Check if combined line would be too long
     const conditionText = ifStmt.getExpression().getText()
-    const combinedLine = `if (${conditionText}) ${statementText}`
+    const combinedLine = this.rebuildIf(conditionText, singleStatement, statementText)
 
     // Get indentation of original if statement
     const indent = this.getIndentation(ifStmt)
@@ -134,6 +140,73 @@ export class CurlyBracesFixer extends BaseFixer {
    *
    * Skip ANY return statement with object literal to be safe
    */
+  /**
+   * A nested `if` would pair with a later `else`. A declaration is only legal inside a block:
+   * `if (x) const y = 1` does not parse. A labeled statement can hide one, and an empty statement is not a
+   * legal `if` body, so both keep their block too.
+   */
+  private needsEnclosingBlock(statement: Statement): boolean {
+    if (statement.getKind() === SyntaxKind.IfStatement) return true
+
+    // `label: function f() {}` and `label: const x = 1` carry a declaration the label hides
+    if (Node.isLabeledStatement(statement)) return true
+
+    // `if (x) ;` is rejected as an empty `if` body
+    if (Node.isEmptyStatement(statement)) return true
+
+    return this.isBlockScopedDeclaration(statement)
+  }
+
+  /**
+   * Declarations that need the block around them. `var` is function-scoped and stays legal
+   * as the body of an `if`.
+   */
+  private isBlockScopedDeclaration(statement: Statement): boolean {
+    if (Node.isVariableStatement(statement)) return statement.getDeclarationKind() !== VariableDeclarationKind.Var
+
+    return (
+      Node.isClassDeclaration(statement) ||
+      Node.isFunctionDeclaration(statement) ||
+      Node.isEnumDeclaration(statement) ||
+      Node.isInterfaceDeclaration(statement) ||
+      Node.isTypeAliasDeclaration(statement) ||
+      Node.isModuleDeclaration(statement)
+    )
+  }
+
+  /**
+   * A statement whose last token is the closing brace of a block needs no `;` after it, and one would be a stray
+   * empty statement. Any other statement gets exactly one, so that a following `[` or `(` cannot continue it.
+   */
+  private rebuildIf(conditionText: string, statement: Statement, statementText: string): string {
+    return `if (${conditionText}) ${statementText}${this.endsWithBlock(statement) ? '' : ';'}`
+  }
+
+  /** A loop ends with a block only when its body does: `for (x of xs) f(x)` ends with a call. */
+  private endsWithBlock(statement: Statement): boolean {
+    if (Node.isBlock(statement) || Node.isTryStatement(statement) || Node.isSwitchStatement(statement)) return true
+
+    if (
+      Node.isForStatement(statement) ||
+      Node.isForInStatement(statement) ||
+      Node.isForOfStatement(statement) ||
+      Node.isWhileStatement(statement)
+    ) {
+      return this.endsWithBlock(statement.getStatement())
+    }
+
+    return false
+  }
+
+  /** Drop one trailing semicolon so the rebuilt statement has exactly one terminator. */
+  private statementWithoutTerminator(statement: Statement): string {
+    const text = statement.getText()
+
+    if (text.endsWith(';')) return text.slice(0, -1)
+
+    return text
+  }
+
   private containsObjectLiteralReturn(statementText: string): boolean {
     // Match: return { ... } - any return with object literal
     // This is conservative but safe - Prettier's object literal wrapping
@@ -152,10 +225,8 @@ export class CurlyBracesFixer extends BaseFixer {
 
       if (!singleStatement) return { success: false, error: 'No statement found' }
 
-      // Remove trailing semicolon if present, we'll add it back
-      const statementText = singleStatement.getText().replace(/;$/, '')
-
-      const newText = `if (${conditionText}) ${statementText}`
+      const statementText = this.statementWithoutTerminator(singleStatement)
+      const newText = this.rebuildIf(conditionText, singleStatement, statementText)
 
       ifStmt.replaceWithText(newText)
 
@@ -163,7 +234,7 @@ export class CurlyBracesFixer extends BaseFixer {
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error)
+        error: errorMessage(error)
       }
     }
   }

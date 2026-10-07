@@ -6,6 +6,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+import { TSCONFIG_JSON } from '@/constants/project-root'
+
 /**
  * Normalize path for cross-platform comparison
  * Handles Windows case-insensitivity and separator differences
@@ -47,7 +49,7 @@ export const findTsConfig = (filePath: string, projectRoot: string): string => {
   let currentDir = path.dirname(absoluteFile)
 
   while (isPathUnder(currentDir, absoluteRoot)) {
-    const tsConfigPath = path.join(currentDir, 'tsconfig.json')
+    const tsConfigPath = path.join(currentDir, TSCONFIG_JSON)
 
     if (fs.existsSync(tsConfigPath)) return tsConfigPath
 
@@ -60,7 +62,7 @@ export const findTsConfig = (filePath: string, projectRoot: string): string => {
   }
 
   // Fallback: check project root for tsconfig.json
-  const rootTsConfig = path.join(absoluteRoot, 'tsconfig.json')
+  const rootTsConfig = path.join(absoluteRoot, TSCONFIG_JSON)
 
   if (fs.existsSync(rootTsConfig)) return rootTsConfig
 

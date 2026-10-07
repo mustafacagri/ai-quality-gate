@@ -104,6 +104,26 @@ describe('independent TypeScript child contract', () => {
     expect(await verifier.runTypeCheck([file])).toMatchObject({ passed: false, status: 'ERROR' })
   })
 
+  it('does not pass a file the tsconfig does not list when the file listing itself fails', async () => {
+    const unlisted = path.join(projectRoot, 'unlisted.ts')
+
+    fs.writeFileSync(unlisted, 'export const unlisted = 1\n')
+    Reflect.set(
+      verifier,
+      'execCommand',
+      vi
+        .fn()
+        .mockResolvedValueOnce(child(0, ''))
+        .mockResolvedValueOnce(child(2, '', { stderr: 'listing crashed' }))
+    )
+
+    const result = await verifier.runTypeCheck([unlisted])
+
+    expect(result).toMatchObject({ passed: false, status: 'ERROR' })
+    expect(result.errors[0]?.message).toContain('tsc could not list the files')
+    expect(result.errors[0]?.message).toContain('listing crashed')
+  })
+
   it('retains genuine compiler findings', async () => {
     mockChild(child(2, `${file}(1,1): error TS2322: Assignment is invalid`))
     expect(await verifier.runTypeCheck([file])).toMatchObject({ passed: false, status: 'FAIL' })

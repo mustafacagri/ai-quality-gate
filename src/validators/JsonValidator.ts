@@ -16,6 +16,7 @@ import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import type { Issue } from '@/types'
 import { isI18nLocaleFile } from '@/constants'
+import { errorMessage } from '@/utils/errorMessage'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Constants
@@ -179,7 +180,7 @@ export class JsonValidator {
    * Extract detailed error information from JSON parse error
    */
   private extractParseError(error: unknown, filePath: string): JsonParseError {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     const { line, column } = this.extractLineColumn(message)
 
     return {
@@ -310,13 +311,7 @@ export class JsonValidator {
     referenceFile: string,
     referenceKeys: Set<string>
   ): I18nIssue[] {
-    const issues: I18nIssue[] = []
-
-    for (const key of referenceKeys) {
-      if (!keys.has(key)) issues.push({ file, type: 'missing_key', key, referenceFile })
-    }
-
-    return issues
+    return this.keysNotIn(referenceKeys, keys).map(key => ({ file, type: 'missing_key', key, referenceFile }))
   }
 
   /**
@@ -328,13 +323,12 @@ export class JsonValidator {
     referenceFile: string,
     referenceKeys: Set<string>
   ): I18nIssue[] {
-    const issues: I18nIssue[] = []
+    return this.keysNotIn(keys, referenceKeys).map(key => ({ file, type: 'extra_key', key, referenceFile }))
+  }
 
-    for (const key of keys) {
-      if (!referenceKeys.has(key)) issues.push({ file, type: 'extra_key', key, referenceFile })
-    }
-
-    return issues
+  /** The keys of `source` that `other` does not have. */
+  private keysNotIn(source: Set<string>, other: Set<string>): string[] {
+    return [...source].filter(key => !other.has(key))
   }
 
   /**

@@ -121,3 +121,66 @@ describe('CustomRulesValidator', () => {
     err.mockRestore()
   })
 })
+
+describe('CustomRulesValidator Vue SFC', () => {
+  it('scans the whole file text, so a rule can target template and style as well as script', async () => {
+    const dir = makeTempDir()
+    const file = path.join(dir, 'Widget.vue')
+
+    fs.writeFileSync(
+      file,
+      '<template>\n  <div v-html="raw" />\n</template>\n<script setup lang="ts">\nconst raw = ""\n</script>\n',
+      'utf8'
+    )
+
+    const rules: CustomRule[] = [{ id: 'no-v-html', message: 'No v-html', pattern: 'v-html', severity: 'error' }]
+    const issues = await new CustomRulesValidator().validate(rules, [file])
+
+    expect(issues).toHaveLength(1)
+    expect(issues[0]).toMatchObject({ rule: 'custom:no-v-html', line: 2, column: 8 })
+  })
+})
+
+describe('CustomRulesValidator warnings', () => {
+  it('reports a rule whose pattern is not a regular expression instead of dropping it unseen', async () => {
+    const dir = makeTempDir()
+    const file = path.join(dir, 'a.ts')
+
+    fs.writeFileSync(file, 'const a = 1\n', 'utf8')
+
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warnings: string[] = []
+    const rules: CustomRule[] = [{ id: 'broken', message: 'm', pattern: '(', severity: 'error' }]
+
+    expect(await new CustomRulesValidator().validate(rules, [file], warnings)).toEqual([])
+    expect(warnings).toEqual(['Custom rule "broken" was not applied: its pattern is not a valid regular expression.'])
+
+    err.mockRestore()
+  })
+
+  it('reports a file it could not read', async () => {
+    const dir = makeTempDir()
+    const missing = path.join(dir, 'missing.ts')
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warnings: string[] = []
+    const rules: CustomRule[] = [{ id: 'todo', message: 'm', pattern: 'TODO', severity: 'error' }]
+
+    expect(await new CustomRulesValidator().validate(rules, [missing], warnings)).toEqual([])
+    expect(warnings).toEqual([`Custom rule "todo" skipped ${missing}: it could not be read.`])
+
+    err.mockRestore()
+  })
+
+  it('adds no warning when every rule and file could be used', async () => {
+    const dir = makeTempDir()
+    const file = path.join(dir, 'ok.ts')
+
+    fs.writeFileSync(file, 'TODO\n', 'utf8')
+
+    const warnings: string[] = []
+    const rules: CustomRule[] = [{ id: 'todo', message: 'm', pattern: 'TODO', severity: 'error' }]
+
+    expect(await new CustomRulesValidator().validate(rules, [file], warnings)).toHaveLength(1)
+    expect(warnings).toEqual([])
+  })
+})

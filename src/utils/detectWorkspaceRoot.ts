@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { PROJECT_ROOT_MARKER_FILES } from '@/constants/project-root'
 
 /**
  * Detects the workspace root by searching upwards from the start directory up to 10 levels.
@@ -9,7 +10,7 @@ export function detectWorkspaceRoot(startDir: string): string {
   let dir = startDir
 
   // 2. Search upward for project markers
-  const markers = ['package.json', 'tsconfig.json', '.git', 'pnpm-workspace.yaml']
+  const markers = [...PROJECT_ROOT_MARKER_FILES, '.git', 'pnpm-workspace.yaml']
 
   for (let i = 0; i < 10; i++) {
     // Max 10 levels up

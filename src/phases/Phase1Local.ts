@@ -11,6 +11,8 @@ import { CustomRulesValidator, JsonValidator, type JsonValidationResult } from '
 import { isJsonFile, isLintableFile } from '@/constants/extensions'
 import { CHECK_STATUS, VERIFICATION_ERROR_CODE } from '@/constants/verification'
 import type { TypeCheckResult, LintResult } from '@/types/verification'
+import { diagnoseVueFiles } from '@/vue/vueSfcDiagnostics'
+import { emptyFixSummary } from '@/utils/fixSummary'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Constants
@@ -26,14 +28,12 @@ const MAX_I18N_ISSUES_TO_DISPLAY = 5
 export class Phase1Local {
   private readonly config: Config
   private readonly verifier: Verifier
-  private readonly autoFixer: AutoFixer
   private readonly jsonValidator: JsonValidator
   private readonly customRulesValidator: CustomRulesValidator
 
   constructor(config: Config) {
     this.config = config
     this.verifier = new Verifier(config)
-    this.autoFixer = new AutoFixer(config.fixers)
     this.jsonValidator = new JsonValidator()
     this.customRulesValidator = new CustomRulesValidator()
   }
@@ -46,9 +46,24 @@ export class Phase1Local {
    * via stderr warnings only; they do **not** set `passed: false` for Phase 1.
    */
   async run(files: string[], transaction: Transaction, options?: Phase1RunOptions): Promise<LocalResult> {
-    const fixSummary = this.createEmptyFixSummary()
+    // Everything a run learns is kept in values that belong to the run, so runs on one instance cannot mix.
+    const warnings: string[] = []
+    const result = await this.runAnalysis(files, transaction, warnings, options)
+
+    return warnings.length > 0 ? { ...result, warnings } : result
+  }
+
+  private async runAnalysis(
+    files: string[],
+    transaction: Transaction,
+    warnings: string[],
+    options?: Phase1RunOptions
+  ): Promise<LocalResult> {
+    const fixSummary = emptyFixSummary()
     const { jsonFiles, codeFiles } = this.categorizeFiles(files)
     const phase1Mode = options?.phase1Mode ?? 'fix'
+
+    options?.onFixSummary?.(fixSummary)
 
     // Step 0: JSON Validation
     const jsonResult = await this.runJsonValidation(jsonFiles, fixSummary)
@@ -60,22 +75,9 @@ export class Phase1Local {
       return { passed: true, fixed: fixSummary, issues: [] }
     }
 
-    if (phase1Mode === 'check') return this.runCodeAnalysisCheck(codeFiles, fixSummary)
+    if (phase1Mode === 'check') return this.runCodeAnalysisCheck(codeFiles, fixSummary, warnings)
 
-    return this.runCodeAnalysis(codeFiles, transaction, fixSummary)
-  }
-
-  /**
-   * Create empty fix summary
-   */
-  private createEmptyFixSummary(): FixSummary {
-    return {
-      eslint: 0,
-      curlyBraces: 0,
-      singleLineArrow: 0,
-      prettier: 0,
-      json: 0
-    }
+    return this.runCodeAnalysis(codeFiles, transaction, fixSummary, warnings)
   }
 
   /**
@@ -112,12 +114,12 @@ export class Phase1Local {
   /**
    * Run regex custom rules from config (optional).
    */
-  private runCustomRulesPhase(codeFiles: string[]): Promise<Issue[]> {
+  private runCustomRulesPhase(codeFiles: string[], warnings: string[]): Promise<Issue[]> {
     const rules = this.config.customRules
 
     if (!rules?.length) return Promise.resolve([])
 
-    return this.customRulesValidator.validate(rules, codeFiles)
+    return this.customRulesValidator.validate(rules, codeFiles, warnings)
   }
 
   /**
@@ -144,7 +146,8 @@ export class Phase1Local {
   private async runCodeAnalysis(
     codeFiles: string[],
     transaction: Transaction,
-    fixSummary: FixSummary
+    fixSummary: FixSummary,
+    warnings: string[]
   ): Promise<LocalResult> {
     // Step 1: TypeScript Check
     const typecheck = await this.verifier.runTypeCheck(codeFiles)
@@ -153,68 +156,96 @@ export class Phase1Local {
       return this.verificationFailure(typecheck, fixSummary)
     }
 
-    const customIssuesEarly = await this.runCustomRulesPhase(codeFiles)
+    // An SFC the Vue compiler rejects cannot be edited safely. Custom rules and lint findings do not stop the fixers.
+    const invalidVue = this.vueSfcFailure(codeFiles, fixSummary)
 
-    if (customIssuesEarly.length > 0) {
-      return { passed: false, fixed: fixSummary, issues: customIssuesEarly }
-    }
+    if (invalidVue) return invalidVue
 
     this.ensureTransactionPrimedForMutablePhase(codeFiles, transaction)
 
+    const fixerFailure = await this.applyFixers(codeFiles, transaction, fixSummary, warnings)
+
+    if (fixerFailure) return fixerFailure
+
+    return this.verifyAfterFixes(codeFiles, fixSummary, warnings)
+  }
+
+  private vueSfcFailure(codeFiles: string[], fixSummary: FixSummary): LocalResult | null {
+    const issues = diagnoseVueFiles(codeFiles)
+
+    if (issues.length === 0) return null
+
+    return { passed: false, fixed: fixSummary, issues }
+  }
+
+  private async applyFixers(
+    codeFiles: string[],
+    transaction: Transaction,
+    fixSummary: FixSummary,
+    warnings: string[]
+  ): Promise<LocalResult | null> {
     const { fixers } = this.config
 
-    // Step 2: AST Auto-Fixers
-    if (fixers.curlyBraces || fixers.singleLineArrow) await this.runAstFixers(codeFiles, transaction, fixSummary)
+    if (fixers.curlyBraces || fixers.singleLineArrow) {
+      await this.runAstFixers(codeFiles, transaction, fixSummary, warnings)
+    }
 
-    // Step 3: ESLint + SonarJS
     if (fixers.eslint) {
-      const lintFix = await this.verifier.runLintFix(codeFiles)
-      fixSummary.eslint = lintFix.fixedCount
+      const lintFailure = await this.applyEslintFix(codeFiles, fixSummary)
+
+      if (lintFailure) return lintFailure
     }
 
-    // Step 4: Prettier
-    if (fixers.prettier) {
-      const prettierResult = await this.verifier.runPrettier(codeFiles)
-      fixSummary.prettier = prettierResult.formattedCount
-    }
+    const prettierFailure = await this.applyPrettier(codeFiles, fixSummary)
 
-    // Step 5: ESLint --fix again (Prettier may have introduced formatting that needs ESLint fixes)
-    if (fixers.eslint) {
-      const lintFixAfterPrettier = await this.verifier.runLintFix(codeFiles)
-      fixSummary.eslint += lintFixAfterPrettier.fixedCount
-    }
+    if (prettierFailure) return prettierFailure
 
-    // Step 6: Re-verify
-    return this.verifyAfterFixes(codeFiles, fixSummary)
+    if (fixers.eslint) return this.applyEslintFix(codeFiles, fixSummary)
+
+    return null
+  }
+
+  /** ESLint failing to run (a parse error, a crash) means its output cannot be trusted, so it fails the run. */
+  private async applyEslintFix(codeFiles: string[], fixSummary: FixSummary): Promise<LocalResult | null> {
+    const lintFix = await this.verifier.runLintFix(codeFiles)
+
+    fixSummary.eslint += lintFix.fixedCount
+
+    if (lintFix.status === CHECK_STATUS.ERROR) return this.verificationFailure(lintFix, fixSummary)
+
+    return null
+  }
+
+  private async applyPrettier(codeFiles: string[], fixSummary: FixSummary): Promise<LocalResult | null> {
+    if (!this.config.fixers.prettier) return null
+
+    const prettierResult = await this.verifier.runPrettier(codeFiles)
+    fixSummary.prettier = prettierResult.formattedCount
+
+    if (prettierResult.success) return null
+
+    return { passed: false, fixed: fixSummary, issues: prettierResult.issues }
   }
 
   /**
    * Read-only Phase 1: typecheck + lint check only (no AST / ESLint --fix / Prettier writes).
    */
-  private async runCodeAnalysisCheck(codeFiles: string[], fixSummary: FixSummary): Promise<LocalResult> {
+  private async runCodeAnalysisCheck(
+    codeFiles: string[],
+    fixSummary: FixSummary,
+    warnings: string[]
+  ): Promise<LocalResult> {
     const typecheck = await this.verifier.runTypeCheck(codeFiles)
 
     if (!typecheck.passed) {
       return { ...this.verificationFailure(typecheck, fixSummary), checks: { typecheck } }
     }
 
-    const customIssuesEarly = await this.runCustomRulesPhase(codeFiles)
+    const invalidVue = this.vueSfcFailure(codeFiles, fixSummary)
 
-    if (customIssuesEarly.length > 0) {
-      return { passed: false, fixed: fixSummary, issues: customIssuesEarly }
-    }
+    if (invalidVue) return invalidVue
 
-    if (!this.config.fixers.eslint) {
-      return { passed: true, fixed: fixSummary, issues: [], checks: { typecheck } }
-    }
-
-    const lintCheck = await this.verifier.runLintCheck(codeFiles)
-
-    if (!lintCheck.passed) {
-      return { ...this.verificationFailure(lintCheck, fixSummary), checks: { typecheck, lint: lintCheck } }
-    }
-
-    return { passed: true, fixed: fixSummary, issues: [], checks: { typecheck, lint: lintCheck } }
+    return this.collectFindings(codeFiles, fixSummary, warnings, typecheck)
   }
 
   private verificationFailure(result: LintResult | TypeCheckResult, fixed: FixSummary): LocalResult {
@@ -243,37 +274,78 @@ export class Phase1Local {
   /**
    * Run AST fixers and update summary
    */
-  private async runAstFixers(codeFiles: string[], transaction: Transaction, fixSummary: FixSummary): Promise<void> {
-    const astFixes = await this.autoFixer.scanAndFix(codeFiles, transaction)
+  private async runAstFixers(
+    codeFiles: string[],
+    transaction: Transaction,
+    fixSummary: FixSummary,
+    warnings: string[]
+  ): Promise<void> {
+    // The fixers keep what they skipped, so each run gets its own.
+    const autoFixer = new AutoFixer(this.config.fixers)
+    const astFixes = await autoFixer.scanAndFix(codeFiles, transaction)
+
     fixSummary.curlyBraces = astFixes.curlyBraces
     fixSummary.singleLineArrow = astFixes.singleLineArrow
+    warnings.push(...autoFixer.drainSkipped())
   }
 
   /**
-   * Re-verify after all fixes
+   * Re-verify after all fixes.
+   * Type errors, an SFC the Vue compiler rejects, and ESLint failing to run mean the fixers broke the code, so the
+   * run is rolled back. Lint findings and custom-rule matches are things the fixers could not fix: the edits stay
+   * and the findings are reported.
    */
-  private async verifyAfterFixes(codeFiles: string[], fixSummary: FixSummary): Promise<LocalResult> {
-    // Re-run typecheck
+  private async verifyAfterFixes(
+    codeFiles: string[],
+    fixSummary: FixSummary,
+    warnings: string[]
+  ): Promise<LocalResult> {
     const recheckType = await this.verifier.runTypeCheck(codeFiles)
 
     if (!recheckType.passed) {
       return this.verificationFailure(recheckType, fixSummary)
     }
 
-    const customIssues = await this.runCustomRulesPhase(codeFiles)
+    const invalidVue = this.vueSfcFailure(codeFiles, fixSummary)
 
-    if (customIssues.length > 0) {
-      return { passed: false, fixed: fixSummary, issues: customIssues }
-    }
+    if (invalidVue) return invalidVue
+
+    return this.collectFindings(codeFiles, fixSummary, warnings)
+  }
+
+  /**
+   * Lint findings and custom-rule matches, reported together. ESLint failing to run is not a finding: it is
+   * returned as a failure that rolls the run back.
+   */
+  private async collectFindings(
+    codeFiles: string[],
+    fixSummary: FixSummary,
+    warnings: string[],
+    typecheck?: TypeCheckResult
+  ): Promise<LocalResult> {
+    const findings: Issue[] = []
+    let lint: LintResult | undefined
 
     if (this.config.fixers.eslint) {
-      const recheckLint = await this.verifier.runLintCheck(codeFiles)
+      lint = await this.verifier.runLintCheck(codeFiles)
 
-      if (!recheckLint.passed) {
-        return this.verificationFailure(recheckLint, fixSummary)
+      if (lint.status === CHECK_STATUS.ERROR) {
+        return this.withChecks(this.verificationFailure(lint, fixSummary), typecheck, lint)
       }
+
+      findings.push(...lint.errors)
     }
 
-    return { passed: true, fixed: fixSummary, issues: [] }
+    findings.push(...(await this.runCustomRulesPhase(codeFiles, warnings)))
+
+    if (findings.length === 0) return this.withChecks({ passed: true, fixed: fixSummary, issues: [] }, typecheck, lint)
+
+    return this.withChecks({ passed: false, fixed: fixSummary, issues: findings, keepEdits: true }, typecheck, lint)
+  }
+
+  private withChecks(result: LocalResult, typecheck?: TypeCheckResult, lint?: LintResult): LocalResult {
+    if (typecheck === undefined) return result
+
+    return { ...result, checks: lint === undefined ? { typecheck } : { typecheck, lint } }
   }
 }

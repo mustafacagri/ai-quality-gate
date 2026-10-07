@@ -36,7 +36,8 @@ export { JSON_EXTENSIONS, isJsonFile, I18N_LOCALE_PATTERNS, isI18nLocaleFile } f
 export { DEPRECATED_PATTERN, TYPESCRIPT_ERROR_PATTERN } from './patterns'
 
 // Rule Names
-export { RULE_NAMES, CUSTOM_RULE_PREFIX, formatCustomRuleId } from './rules'
+export { RULE_NAMES, CUSTOM_RULE_PREFIX, UNKNOWN_ISSUE_LINE, formatCustomRuleId } from './rules'
+export { FILE_SYSTEM_ERROR_CODE } from './fileSystem'
 
 // ESLint discovery (project root)
 export { ESLINT_PROJECT_ROOT_CONFIG_FILENAMES } from './eslintConfigFilenames'
@@ -48,3 +49,6 @@ export { PROJECT_ROOT_MARKER_FILES } from './project-root'
 // CLI exit codes
 export { EXIT_CODE } from './exit-codes'
 export type { ExitCode } from './exit-codes'
+
+// Error codes
+export { ERROR_CODE } from './errors'

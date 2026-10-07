@@ -32,10 +32,13 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
-      # 3️⃣ Install & Build
-      - name: Install & Build
+      # 3️⃣ Install, verify & build
+      # The quality gate runs BEFORE semantic-release: a failure after it would leave a tag and a GitHub release
+      # for a version that never reached npm (`npm publish` runs the same checks again via prepublishOnly).
+      - name: Install, verify & build
         run: |
           yarn install --frozen-lockfile
+          yarn quality
           yarn build
 
       # 4️⃣ Versioning + changelog + git tag

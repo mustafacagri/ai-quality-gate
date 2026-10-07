@@ -8,11 +8,12 @@ import path from 'node:path'
 import { formatCustomRuleId } from '@/constants/rules'
 import type { CustomRule, Issue } from '@/types'
 
-function compileRulePattern(pattern: string, ruleId: string): RegExp | null {
+function compileRulePattern(pattern: string, ruleId: string, warnings: string[]): RegExp | null {
   try {
     return new RegExp(pattern, 'g')
   } catch {
     console.error(`[ai-quality-gate] Invalid custom rule pattern (skipped): id=${ruleId}, pattern=${pattern}`)
+    warnings.push(`Custom rule "${ruleId}" was not applied: its pattern is not a valid regular expression.`)
 
     return null
   }
@@ -51,13 +52,14 @@ function pushMatchesOnLine(
   }
 }
 
-async function scanFileWithRule(rule: CustomRule, regex: RegExp, file: string): Promise<Issue[]> {
+async function scanFileWithRule(rule: CustomRule, regex: RegExp, file: string, warnings: string[]): Promise<Issue[]> {
   let content: string
 
   try {
     content = await readFile(file, 'utf8')
   } catch (error) {
     console.error(`[ai-quality-gate] Could not read file for custom rules: ${file}`, error)
+    warnings.push(`Custom rule "${rule.id}" skipped ${file}: it could not be read.`)
 
     return []
   }
@@ -75,18 +77,19 @@ async function scanFileWithRule(rule: CustomRule, regex: RegExp, file: string): 
 }
 
 export class CustomRulesValidator {
-  async validate(rules: CustomRule[], files: string[]): Promise<Issue[]> {
+  /** @param warnings Receives a line for each rule or file that could not be applied, so none is skipped unseen. */
+  async validate(rules: CustomRule[], files: string[], warnings: string[] = []): Promise<Issue[]> {
     if (rules.length === 0 || files.length === 0) return []
 
     const issues: Issue[] = []
 
     for (const rule of rules) {
-      const regex = compileRulePattern(rule.pattern, rule.id)
+      const regex = compileRulePattern(rule.pattern, rule.id, warnings)
 
       if (regex === null) continue
 
       for (const file of files) {
-        const fileIssues = await scanFileWithRule(rule, regex, file)
+        const fileIssues = await scanFileWithRule(rule, regex, file, warnings)
 
         issues.push(...fileIssues)
       }

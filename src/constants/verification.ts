@@ -2,9 +2,20 @@
 export const CHECK_STATUS = { PASS: 'PASS', FAIL: 'FAIL', ERROR: 'ERROR' } as const
 export type CheckStatus = (typeof CHECK_STATUS)[keyof typeof CHECK_STATUS]
 export const VERIFIER_TOOL_MODULE = {
-  ESLINT: { package: 'eslint/package.json', binary: 'bin/eslint.js' },
-  TYPESCRIPT: { package: 'typescript/package.json', binary: 'bin/tsc' },
-  PRETTIER: { package: 'prettier/package.json', binary: 'bin/prettier.cjs' }
+  ESLINT: { name: 'eslint', package: 'eslint/package.json', binary: 'bin/eslint.js' },
+  TYPESCRIPT: { name: 'tsc', package: 'typescript/package.json', binary: 'bin/tsc' },
+  VUE_TSC: { name: 'vue-tsc', package: 'vue-tsc/package.json', binary: 'bin/vue-tsc.js' },
+  PRETTIER: { name: 'prettier', package: 'prettier/package.json', binary: 'bin/prettier.cjs' }
+} as const
+
+/** Flags of `tsc` and `vue-tsc`, which take the same ones. */
+export const TYPECHECK_FLAG = {
+  NO_EMIT: '--noEmit',
+  INCREMENTAL: '--incremental',
+  BUILD_INFO_FILE: '--tsBuildInfoFile',
+  PRETTY: '--pretty',
+  PROJECT: '--project',
+  LIST_FILES_ONLY: '--listFilesOnly'
 } as const
 export const STRICT_LINT_ARGUMENTS = ['--max-warnings', '0', '--format', 'json', '--no-ignore'] as const
 export const VERIFICATION_ERROR_CODE = { TYPESCRIPT: 'TYPECHECK_FAILED', ESLINT: 'LINT_FAILED' } as const

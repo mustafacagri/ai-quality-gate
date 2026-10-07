@@ -8,12 +8,15 @@ import { configManager } from '@/config'
 import { ENV_KEYS } from '@/config/schema'
 import { QualityGate } from '@/core'
 import { EXIT_CODE, PHASE } from '@/constants'
+import { ERROR_CODE } from '@/constants/errors'
+import { failureResponse, noFilesResponse, zeroTiming } from '@/core/responses'
 import type { QualityFixResponse } from '@/types'
 import { filterCodeFiles } from '@/utils/codeFileFilter'
 import { getPackageVersion } from '@/utils/packageVersion'
 
 import { CLI_OPTION, parseCliArgs, type CliRunPayload } from './parseCli'
 import { runSetup } from './setup'
+import { errorMessage } from '@/utils/errorMessage'
 
 function printHelp(): void {
   const lines = [
@@ -51,26 +54,17 @@ function mapExitCode(result: QualityFixResponse): number {
 }
 
 function buildEmptyCliResponse(skippedCount: number, skippedList: string): QualityFixResponse {
-  return {
-    phase: PHASE.COMPLETE,
-    success: true,
-    message: `No code files to check. Skipped ${String(skippedCount)} non-code file(s): ${skippedList}`,
-    fixed: { eslint: 0, curlyBraces: 0, singleLineArrow: 0, prettier: 0, json: 0 },
-    remaining: [],
-    timing: { phase1: '0ms', total: '0ms' }
-  }
+  return noFilesResponse(`No code files to check. Skipped ${String(skippedCount)} non-code file(s): ${skippedList}`)
 }
 
 function buildExecutionErrorResponse(message: string): QualityFixResponse {
-  return {
+  return failureResponse({
     phase: PHASE.LOCAL,
-    success: false,
     message: 'Execution error',
-    fixed: { eslint: 0, curlyBraces: 0, singleLineArrow: 0, prettier: 0, json: 0 },
     remaining: [],
-    timing: { phase1: '0ms', total: '0ms' },
-    error: { code: 'UNEXPECTED_ERROR', message }
-  }
+    timing: zeroTiming(),
+    error: { code: ERROR_CODE.UNEXPECTED_ERROR, message }
+  })
 }
 
 async function runQualityPayload(payload: CliRunPayload): Promise<number> {
@@ -123,7 +117,7 @@ export async function runCli(argv: string[]): Promise<number> {
   try {
     return await runQualityPayload(parsed.payload)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     const response = buildExecutionErrorResponse(message)
 
     console.log(JSON.stringify(response, null, 2))

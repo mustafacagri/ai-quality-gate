@@ -12,6 +12,7 @@ import { CONFIG_FILE_NAMES } from '@/constants/config-files'
 import type { FixerConfig } from '@/types'
 
 import { SETUP_FIXER_VALUES, fixersFromSelection, type SetupWizardModel } from './setupModel'
+import { errorMessage } from '@/utils/errorMessage'
 
 export function assertValidHttpUrl(value: string): void {
   let parsed: URL
@@ -27,7 +28,7 @@ export function assertValidHttpUrl(value: string): void {
 
 /** Maps thrown values to inquirer validation error strings (shared branches). */
 export function formatValidationError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorMessage(error)
 }
 
 export function validateRequiredField(input: string, emptyMessage: string): string | true {
